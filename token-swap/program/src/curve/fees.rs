@@ -1,12 +1,14 @@
 //! All fee information, to be used for validation currently
 
-use crate::error::SwapError;
-use arrayref::{array_mut_ref, array_ref, array_refs, mut_array_refs};
-use solana_program::{
-    program_error::ProgramError,
-    program_pack::{IsInitialized, Pack, Sealed},
+use {
+    crate::error::SwapError,
+    arrayref::{array_mut_ref, array_ref, array_refs, mut_array_refs},
+    solana_program::{
+        program_error::ProgramError,
+        program_pack::{IsInitialized, Pack, Sealed},
+    },
+    std::convert::TryFrom,
 };
-use std::convert::TryFrom;
 
 /// Encapsulates all fee information and calculations for swap operations
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -18,9 +20,9 @@ pub struct Fees {
     /// Trade fee denominator
     pub trade_fee_denominator: u64,
 
-    /// Owner trading fees are extra token amounts that are held inside the token
-    /// accounts during a trade, with the equivalent in pool tokens minted to
-    /// the owner of the program.
+    /// Owner trading fees are extra token amounts that are held inside the
+    /// token accounts during a trade, with the equivalent in pool tokens
+    /// minted to the owner of the program.
     /// Owner trade fee numerator
     pub owner_trade_fee_numerator: u64,
     /// Owner trade fee denominator
@@ -61,6 +63,29 @@ pub fn calculate_fee(
     }
 }
 
+fn ceil_div(dividend: u128, divisor: u128) -> Option<u128> {
+    dividend
+        .checked_add(divisor)?
+        .checked_sub(1)?
+        .checked_div(divisor)
+}
+
+fn pre_fee_amount(
+    post_fee_amount: u128,
+    fee_numerator: u128,
+    fee_denominator: u128,
+) -> Option<u128> {
+    if fee_numerator == 0 || fee_denominator == 0 {
+        Some(post_fee_amount)
+    } else if fee_numerator == fee_denominator || post_fee_amount == 0 {
+        Some(0)
+    } else {
+        let numerator = post_fee_amount.checked_mul(fee_denominator)?;
+        let denominator = fee_denominator.checked_sub(fee_numerator)?;
+        ceil_div(numerator, denominator)
+    }
+}
+
 fn validate_fraction(numerator: u64, denominator: u64) -> Result<(), SwapError> {
     if denominator == 0 && numerator == 0 {
         Ok(())
@@ -97,6 +122,36 @@ impl Fees {
             u128::try_from(self.owner_trade_fee_numerator).ok()?,
             u128::try_from(self.owner_trade_fee_denominator).ok()?,
         )
+    }
+
+    /// Calculate the inverse trading amount, how much input is needed to give
+    /// the provided output
+    pub fn pre_trading_fee_amount(&self, post_fee_amount: u128) -> Option<u128> {
+        if self.trade_fee_numerator == 0 || self.trade_fee_denominator == 0 {
+            pre_fee_amount(
+                post_fee_amount,
+                self.owner_trade_fee_numerator as u128,
+                self.owner_trade_fee_denominator as u128,
+            )
+        } else if self.owner_trade_fee_numerator == 0 || self.owner_trade_fee_denominator == 0 {
+            pre_fee_amount(
+                post_fee_amount,
+                self.trade_fee_numerator as u128,
+                self.trade_fee_denominator as u128,
+            )
+        } else {
+            pre_fee_amount(
+                post_fee_amount,
+                (self.trade_fee_numerator as u128)
+                    .checked_mul(self.owner_trade_fee_denominator as u128)?
+                    .checked_add(
+                        (self.owner_trade_fee_numerator as u128)
+                            .checked_mul(self.trade_fee_denominator as u128)?,
+                    )?,
+                (self.trade_fee_denominator as u128)
+                    .checked_mul(self.owner_trade_fee_denominator as u128)?,
+            )
+        }
     }
 
     /// Calculate the host fee based on the owner fee, only used in production

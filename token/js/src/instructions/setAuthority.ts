@@ -1,15 +1,17 @@
 import { struct, u8 } from '@solana/buffer-layout';
 import { publicKey } from '@solana/buffer-layout-utils';
-import { AccountMeta, PublicKey, Signer, TransactionInstruction } from '@solana/web3.js';
-import { TOKEN_PROGRAM_ID } from '../constants';
+import type { AccountMeta, Signer, PublicKey } from '@solana/web3.js';
+import { TransactionInstruction } from '@solana/web3.js';
+import { TOKEN_PROGRAM_ID } from '../constants.js';
 import {
     TokenInvalidInstructionDataError,
     TokenInvalidInstructionKeysError,
     TokenInvalidInstructionProgramError,
     TokenInvalidInstructionTypeError,
-} from '../errors';
-import { addSigners } from './internal';
-import { TokenInstruction } from './types';
+} from '../errors.js';
+import { addSigners } from './internal.js';
+import { TokenInstruction } from './types.js';
+import { COptionPublicKeyLayout } from '../serialization.js';
 
 /** Authority types defined by the program */
 export enum AuthorityType {
@@ -17,22 +19,29 @@ export enum AuthorityType {
     FreezeAccount = 1,
     AccountOwner = 2,
     CloseAccount = 3,
+    TransferFeeConfig = 4,
+    WithheldWithdraw = 5,
+    CloseMint = 6,
+    InterestRate = 7,
+    PermanentDelegate = 8,
+    ConfidentialTransferMint = 9,
+    TransferHookProgramId = 10,
+    ConfidentialTransferFeeConfig = 11,
+    MetadataPointer = 12,
 }
 
 /** TODO: docs */
 export interface SetAuthorityInstructionData {
     instruction: TokenInstruction.SetAuthority;
     authorityType: AuthorityType;
-    newAuthorityOption: 1 | 0;
-    newAuthority: PublicKey;
+    newAuthority: PublicKey | null;
 }
 
 /** TODO: docs */
 export const setAuthorityInstructionData = struct<SetAuthorityInstructionData>([
     u8('instruction'),
     u8('authorityType'),
-    u8('newAuthorityOption'),
-    publicKey('newAuthority'),
+    new COptionPublicKeyLayout('newAuthority'),
 ]);
 
 /**
@@ -52,7 +61,7 @@ export function createSetAuthorityInstruction(
     currentAuthority: PublicKey,
     authorityType: AuthorityType,
     newAuthority: PublicKey | null,
-    multiSigners: Signer[] = [],
+    multiSigners: (Signer | PublicKey)[] = [],
     programId = TOKEN_PROGRAM_ID
 ): TransactionInstruction {
     const keys = addSigners([{ pubkey: account, isSigner: false, isWritable: true }], currentAuthority, multiSigners);
@@ -62,8 +71,7 @@ export function createSetAuthorityInstruction(
         {
             instruction: TokenInstruction.SetAuthority,
             authorityType,
-            newAuthorityOption: newAuthority ? 1 : 0,
-            newAuthority: newAuthority || new PublicKey(0),
+            newAuthority,
         },
         data
     );
@@ -148,7 +156,7 @@ export function decodeSetAuthorityInstructionUnchecked({
     keys: [account, currentAuthority, ...multiSigners],
     data,
 }: TransactionInstruction): DecodedSetAuthorityInstructionUnchecked {
-    const { instruction, authorityType, newAuthorityOption, newAuthority } = setAuthorityInstructionData.decode(data);
+    const { instruction, authorityType, newAuthority } = setAuthorityInstructionData.decode(data);
 
     return {
         programId,
@@ -160,7 +168,7 @@ export function decodeSetAuthorityInstructionUnchecked({
         data: {
             instruction,
             authorityType,
-            newAuthority: newAuthorityOption ? newAuthority : null,
+            newAuthority,
         },
     };
 }

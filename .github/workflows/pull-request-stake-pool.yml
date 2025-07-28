@@ -6,18 +6,39 @@ on:
     - 'stake-pool/**'
     - 'token/**'
     - 'ci/*-version.sh'
+    - 'ci/warning/purge-ubuntu-runner.sh'
+    - '.github/workflows/pull-request-stake-pool.yml'
+    - '!stake-pool/js/**'
+    - '!token/js/**'
   push:
     branches: [master]
     paths:
     - 'stake-pool/**'
     - 'token/**'
     - 'ci/*-version.sh'
+    - 'ci/warning/purge-ubuntu-runner.sh'
+    - '.github/workflows/pull-request-stake-pool.yml'
+    - '!stake-pool/js/**'
+    - '!token/js/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  cargo-test-bpf:
+  cargo-test-sbf:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
+
+      - name: Check disk space
+        run: df -h
+
+      - name: Remove unneeded packages for more space
+        run: bash ./ci/warning/purge-ubuntu-runner.sh
+
+      - name: Check disk space again
+        run: df -h
 
       - name: Set env vars
         run: |
@@ -26,26 +47,24 @@ jobs:
           source ci/solana-version.sh
           echo "SOLANA_VERSION=$solana_version" >> $GITHUB_ENV
 
-      - uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_STABLE }}
-          override: true
-          profile: minimal
 
-      - uses: actions/cache@v2
+      - uses: actions/cache@v3
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
           key: cargo-build-${{ hashFiles('**/Cargo.lock') }}-${{ env.RUST_STABLE}}
 
-      - uses: actions/cache@v2
+      - uses: actions/cache@v3
         with:
           path: |
             ~/.cargo/bin/rustfilt
-          key: cargo-bpf-bins-${{ runner.os }}
+          key: cargo-sbf-bins-${{ runner.os }}
 
-      - uses: actions/cache@v2
+      - uses: actions/cache@v3
         with:
           path: ~/.cache/solana
           key: solana-${{ env.SOLANA_VERSION }}
@@ -57,10 +76,10 @@ jobs:
           echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
 
       - name: Build and test
-        run: ./ci/cargo-test-bpf.sh stake-pool
+        run: ./ci/cargo-test-sbf.sh stake-pool
 
       - name: Upload programs
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v3
         with:
           name: stake-pool-programs
           path: "target/deploy/*.so"
@@ -70,44 +89,41 @@ jobs:
     runs-on: ubuntu-latest
     env:
       NODE_VERSION: 16.x
-    needs: cargo-test-bpf
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: Use Node.js ${{ env.NODE_VERSION }}
-        uses: actions/setup-node@v1
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-      - uses: actions/cache@v2
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
+      - uses: actions/cache@v3
         with:
           path: ~/.npm
-          key: node-${{ hashFiles('stake-pool/js/package-lock.json') }}
+          key: node-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: |
             node-
-      - name: Download programs
-        uses: actions/download-artifact@v2
-        with:
-          name: stake-pool-programs
-          path: target/deploy
       - run: ./ci/js-test-stake-pool.sh
 
   py-test:
     runs-on: ubuntu-latest
-    needs: cargo-test-bpf
+    needs: cargo-test-sbf
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
       - name: Setup Python version
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v4
         with:
           python-version: 3.8
 
-      - uses: actions/cache@v2
+      - uses: actions/cache@v3
         with:
           path: ~/.cache/pip
           key: pip-stake-pool-${{ hashFiles('stake-pool/py/requirements.txt') }}
 
       - name: Download programs
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v3
         with:
           name: stake-pool-programs
           path: target/deploy

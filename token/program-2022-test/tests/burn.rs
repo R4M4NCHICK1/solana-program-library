@@ -1,4 +1,4 @@
-#![cfg(feature = "test-bpf")]
+#![cfg(feature = "test-sbf")]
 
 mod program_test;
 use {
@@ -14,39 +14,48 @@ use {
 
 async fn run_basic(context: TestContext) {
     let TokenContext {
-        decimals,
         mint_authority,
         token,
+        token_unchecked,
         alice,
         bob,
         ..
     } = context.token_context.unwrap();
 
     let alice_account = Keypair::new();
-    let alice_account = token
+    token
         .create_auxiliary_token_account(&alice_account, &alice.pubkey())
         .await
         .unwrap();
+    let alice_account = alice_account.pubkey();
 
     // mint a token
     let amount = 10;
     token
-        .mint_to(&alice_account, &mint_authority, amount)
+        .mint_to(
+            &alice_account,
+            &mint_authority.pubkey(),
+            amount,
+            &[&mint_authority],
+        )
         .await
         .unwrap();
 
     // unchecked is ok
-    token.burn(&alice_account, &alice, 1).await.unwrap();
+    token_unchecked
+        .burn(&alice_account, &alice.pubkey(), 1, &[&alice])
+        .await
+        .unwrap();
 
     // checked is ok
     token
-        .burn_checked(&alice_account, &alice, 1, decimals)
+        .burn(&alice_account, &alice.pubkey(), 1, &[&alice])
         .await
         .unwrap();
 
     // burn too much is not ok
     let error = token
-        .burn_checked(&alice_account, &alice, amount, decimals)
+        .burn(&alice_account, &alice.pubkey(), amount, &[&alice])
         .await
         .unwrap_err();
     assert_eq!(
@@ -61,7 +70,7 @@ async fn run_basic(context: TestContext) {
 
     // wrong signer
     let error = token
-        .burn_checked(&alice_account, &bob, 1, decimals)
+        .burn(&alice_account, &bob.pubkey(), 1, &[&bob])
         .await
         .unwrap_err();
     assert_eq!(
@@ -99,31 +108,40 @@ async fn basic_with_extension() {
 
 async fn run_self_owned(context: TestContext) {
     let TokenContext {
-        decimals,
         mint_authority,
         token,
+        token_unchecked,
         alice,
         ..
     } = context.token_context.unwrap();
 
-    let alice_account = token
+    token
         .create_auxiliary_token_account(&alice, &alice.pubkey())
         .await
         .unwrap();
+    let alice_account = alice.pubkey();
 
     // mint a token
     let amount = 10;
     token
-        .mint_to(&alice_account, &mint_authority, amount)
+        .mint_to(
+            &alice_account,
+            &mint_authority.pubkey(),
+            amount,
+            &[&mint_authority],
+        )
         .await
         .unwrap();
 
     // unchecked is ok
-    token.burn(&alice_account, &alice, 1).await.unwrap();
+    token_unchecked
+        .burn(&alice_account, &alice.pubkey(), 1, &[&alice])
+        .await
+        .unwrap();
 
     // checked is ok
     token
-        .burn_checked(&alice_account, &alice, 1, decimals)
+        .burn(&alice_account, &alice.pubkey(), 1, &[&alice])
         .await
         .unwrap();
 }
@@ -152,7 +170,6 @@ async fn self_owned_with_extension() {
 
 async fn run_burn_and_close_system_or_incinerator(context: TestContext, non_owner: &Pubkey) {
     let TokenContext {
-        decimals,
         mint_authority,
         token,
         alice,
@@ -160,25 +177,38 @@ async fn run_burn_and_close_system_or_incinerator(context: TestContext, non_owne
     } = context.token_context.unwrap();
 
     let alice_account = Keypair::new();
-    let alice_account = token
+    token
         .create_auxiliary_token_account(&alice_account, &alice.pubkey())
         .await
         .unwrap();
+    let alice_account = alice_account.pubkey();
 
     // mint a token
     token
-        .mint_to(&alice_account, &mint_authority, 1)
+        .mint_to(
+            &alice_account,
+            &mint_authority.pubkey(),
+            1,
+            &[&mint_authority],
+        )
         .await
         .unwrap();
 
     // transfer token to incinerator/system
     let non_owner_account = Keypair::new();
-    let non_owner_account = token
+    token
         .create_auxiliary_token_account(&non_owner_account, non_owner)
         .await
         .unwrap();
+    let non_owner_account = non_owner_account.pubkey();
     token
-        .transfer_checked(&alice_account, &non_owner_account, &alice, 1, decimals)
+        .transfer(
+            &alice_account,
+            &non_owner_account,
+            &alice.pubkey(),
+            1,
+            &[&alice],
+        )
         .await
         .unwrap();
 
@@ -188,7 +218,8 @@ async fn run_burn_and_close_system_or_incinerator(context: TestContext, non_owne
         .close_account(
             &non_owner_account,
             &solana_program::incinerator::id(),
-            &carlos,
+            &carlos.pubkey(),
+            &[&carlos],
         )
         .await
         .unwrap_err();
@@ -204,13 +235,18 @@ async fn run_burn_and_close_system_or_incinerator(context: TestContext, non_owne
 
     // but anyone can burn it
     token
-        .burn_checked(&non_owner_account, &carlos, 1, decimals)
+        .burn(&non_owner_account, &carlos.pubkey(), 1, &[&carlos])
         .await
         .unwrap();
 
     // closing fails if destination is not the incinerator
     let error = token
-        .close_account(&non_owner_account, &carlos.pubkey(), &carlos)
+        .close_account(
+            &non_owner_account,
+            &carlos.pubkey(),
+            &carlos.pubkey(),
+            &[&carlos],
+        )
         .await
         .unwrap_err();
     assert_eq!(
@@ -224,7 +260,8 @@ async fn run_burn_and_close_system_or_incinerator(context: TestContext, non_owne
         .close_account(
             &non_owner_account,
             &solana_program::system_program::id(),
-            &carlos,
+            &carlos.pubkey(),
+            &[&carlos],
         )
         .await
         .unwrap_err();
@@ -241,7 +278,8 @@ async fn run_burn_and_close_system_or_incinerator(context: TestContext, non_owne
         .close_account(
             &non_owner_account,
             &solana_program::incinerator::id(),
-            &carlos,
+            &carlos.pubkey(),
+            &[&carlos],
         )
         .await
         .unwrap();

@@ -1,3 +1,4 @@
+#![allow(clippy::arithmetic_side_effects)]
 use {
     clap::{
         crate_description, crate_name, crate_version, value_t, App, AppSettings, Arg, ArgMatches,

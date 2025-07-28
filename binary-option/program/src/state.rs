@@ -1,10 +1,11 @@
-use solana_program::{
-    account_info::AccountInfo, entrypoint::ProgramResult, program_error::ProgramError,
-    pubkey::Pubkey,
+use {
+    crate::error::BinaryOptionError,
+    borsh::{BorshDeserialize, BorshSerialize},
+    solana_program::{
+        account_info::AccountInfo, entrypoint::ProgramResult, program_error::ProgramError,
+        pubkey::Pubkey,
+    },
 };
-
-use crate::error::BinaryOptionError;
-use borsh::{BorshDeserialize, BorshSerialize};
 
 #[repr(C)]
 #[derive(BorshSerialize, BorshDeserialize, Debug, Clone)]
@@ -28,8 +29,12 @@ impl BinaryOption {
         Ok(binary_option)
     }
 
-    pub fn increment_supply(&mut self, n: u64) {
-        self.circulation += n;
+    pub fn increment_supply(&mut self, n: u64) -> ProgramResult {
+        self.circulation = self
+            .circulation
+            .checked_add(n)
+            .ok_or(BinaryOptionError::AmountOverflow)?;
+        Ok(())
     }
 
     pub fn decrement_supply(&mut self, n: u64) -> ProgramResult {

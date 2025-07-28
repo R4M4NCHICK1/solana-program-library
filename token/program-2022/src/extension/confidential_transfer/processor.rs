@@ -1,10 +1,24 @@
+// Remove feature once zk ops syscalls are enabled on all networks
+#[cfg(feature = "confidential-hook")]
+use crate::extension::transfer_hook;
+#[cfg(feature = "zk-ops")]
+use {
+    crate::extension::non_transferable::NonTransferable,
+    solana_zk_token_sdk::zk_token_elgamal::ops as syscall,
+};
 use {
     crate::{
         check_program_account,
         error::TokenError,
         extension::{
-            confidential_transfer::{instruction::*, *},
-            StateWithExtensions, StateWithExtensionsMut,
+            confidential_transfer::{ciphertext_extraction::*, instruction::*, verify_proof::*, *},
+            confidential_transfer_fee::{
+                ConfidentialTransferFeeAmount, ConfidentialTransferFeeConfig,
+                EncryptedWithheldAmount,
+            },
+            memo_transfer::{check_previous_sibling_instruction_is_memo, memo_required},
+            transfer_fee::TransferFeeConfig,
+            BaseStateWithExtensions, StateWithExtensions, StateWithExtensionsMut,
         },
         instruction::{decode_instruction_data, decode_instruction_type},
         processor::Processor,
@@ -12,41 +26,21 @@ use {
     },
     solana_program::{
         account_info::{next_account_info, AccountInfo},
+        clock::Clock,
         entrypoint::ProgramResult,
-        instruction::Instruction,
         msg,
         program_error::ProgramError,
         pubkey::Pubkey,
-        sysvar::instructions::get_instruction_relative,
+        sysvar::Sysvar,
     },
-    solana_zk_token_sdk::zk_token_proof_program,
 };
-// Remove feature once zk ops syscalls are enabled on all networks
-#[cfg(feature = "zk-ops")]
-use {
-    crate::extension::transfer_fee::TransferFeeConfig,
-    solana_program::{clock::Clock, sysvar::Sysvar},
-    solana_zk_token_sdk::zk_token_elgamal::ops,
-};
-
-fn decode_proof_instruction<T: Pod>(
-    expected: ProofInstruction,
-    instruction: &Instruction,
-) -> Result<&T, ProgramError> {
-    if instruction.program_id != zk_token_proof_program::id()
-        || ProofInstruction::decode_type(&instruction.data) != Some(expected)
-    {
-        msg!("Unexpected proof instruction");
-        return Err(ProgramError::InvalidInstructionData);
-    }
-
-    ProofInstruction::decode_data(&instruction.data).ok_or(ProgramError::InvalidInstructionData)
-}
 
 /// Processes an [InitializeMint] instruction.
 fn process_initialize_mint(
     accounts: &[AccountInfo],
-    confidential_transfer_mint: &ConfidentialTransferMint,
+    authority: &OptionalNonZeroPubkey,
+    auto_approve_new_account: PodBool,
+    auditor_encryption_pubkey: &OptionalNonZeroElGamalPubkey,
 ) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
     let mint_info = next_account_info(account_info_iter)?;
@@ -54,7 +48,11 @@ fn process_initialize_mint(
     check_program_account(mint_info.owner)?;
     let mint_data = &mut mint_info.data.borrow_mut();
     let mut mint = StateWithExtensionsMut::<Mint>::unpack_uninitialized(mint_data)?;
-    *mint.init_extension::<ConfidentialTransferMint>(true)? = *confidential_transfer_mint;
+    let confidential_transfer_mint = mint.init_extension::<ConfidentialTransferMint>(true)?;
+
+    confidential_transfer_mint.authority = *authority;
+    confidential_transfer_mint.auto_approve_new_accounts = auto_approve_new_account;
+    confidential_transfer_mint.auditor_elgamal_pubkey = *auditor_encryption_pubkey;
 
     Ok(())
 }
@@ -62,43 +60,51 @@ fn process_initialize_mint(
 /// Processes an [UpdateMint] instruction.
 fn process_update_mint(
     accounts: &[AccountInfo],
-    new_confidential_transfer_mint: &ConfidentialTransferMint,
+    auto_approve_new_account: PodBool,
+    auditor_encryption_pubkey: &OptionalNonZeroElGamalPubkey,
 ) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
     let mint_info = next_account_info(account_info_iter)?;
     let authority_info = next_account_info(account_info_iter)?;
-    let new_authority_info = next_account_info(account_info_iter)?;
 
     check_program_account(mint_info.owner)?;
     let mint_data = &mut mint_info.data.borrow_mut();
     let mut mint = StateWithExtensionsMut::<Mint>::unpack(mint_data)?;
     let confidential_transfer_mint = mint.get_extension_mut::<ConfidentialTransferMint>()?;
+    let maybe_confidential_transfer_mint_authority: Option<Pubkey> =
+        confidential_transfer_mint.authority.into();
+    let confidential_transfer_mint_authority =
+        maybe_confidential_transfer_mint_authority.ok_or(TokenError::NoAuthorityExists)?;
 
-    if authority_info.is_signer
-        && confidential_transfer_mint.authority == *authority_info.key
-        && (new_authority_info.is_signer || *new_authority_info.key == Pubkey::default())
-        && new_confidential_transfer_mint.authority == *new_authority_info.key
-    {
-        *confidential_transfer_mint = *new_confidential_transfer_mint;
-        Ok(())
-    } else {
-        Err(ProgramError::MissingRequiredSignature)
+    if !authority_info.is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
     }
+
+    if confidential_transfer_mint_authority != *authority_info.key {
+        return Err(TokenError::OwnerMismatch.into());
+    }
+
+    confidential_transfer_mint.auto_approve_new_accounts = auto_approve_new_account;
+    confidential_transfer_mint.auditor_elgamal_pubkey = *auditor_encryption_pubkey;
+    Ok(())
 }
 
 /// Processes a [ConfigureAccount] instruction.
 fn process_configure_account(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
-    ConfigureAccountInstructionData {
-        encryption_pubkey,
-        decryptable_zero_balance,
-        maximum_pending_balance_credit_counter,
-    }: &ConfigureAccountInstructionData,
+    decryptable_zero_balance: &DecryptableBalance,
+    maximum_pending_balance_credit_counter: &PodU64,
+    proof_instruction_offset: i64,
 ) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
     let token_account_info = next_account_info(account_info_iter)?;
     let mint_info = next_account_info(account_info_iter)?;
+
+    // zero-knowledge proof certifies that the supplied ElGamal public key is valid
+    let proof_context =
+        verify_configure_account_proof(account_info_iter, proof_instruction_offset)?;
+
     let authority_info = next_account_info(account_info_iter)?;
     let authority_info_data_len = authority_info.data_len();
 
@@ -123,54 +129,35 @@ fn process_configure_account(
     let mint = StateWithExtensions::<Mint>::unpack(mint_data)?;
     let confidential_transfer_mint = mint.get_extension::<ConfidentialTransferMint>()?;
 
-    // Note: The caller is expected to use the `Reallocate` instruction to ensure there is
-    // sufficient room in their token account for the new `ConfidentialTransferAccount` extension
-    let mut confidential_transfer_account =
+    // Note: The caller is expected to use the `Reallocate` instruction to ensure
+    // there is sufficient room in their token account for the new
+    // `ConfidentialTransferAccount` extension
+    let confidential_transfer_account =
         token_account.init_extension::<ConfidentialTransferAccount>(false)?;
     confidential_transfer_account.approved = confidential_transfer_mint.auto_approve_new_accounts;
-    confidential_transfer_account.encryption_pubkey = *encryption_pubkey;
+    confidential_transfer_account.elgamal_pubkey = proof_context.pubkey;
     confidential_transfer_account.maximum_pending_balance_credit_counter =
         *maximum_pending_balance_credit_counter;
 
-    /*
-        An ElGamal ciphertext is of the form
-          ElGamalCiphertext {
-            msg_comm: r * H + x * G
-            decrypt_handle: r * P
-          }
-
-        where
-        - G, H: constants for the system (RistrettoPoint)
-        - P: ElGamal public key component (RistrettoPoint)
-        - r: encryption randomness (Scalar)
-        - x: message (Scalar)
-
-        Upon receiving a `ConfigureAccount` instruction, the ZK Token program should encrypt x=0
-        (i.e. Scalar::zero()) and store it as `pending_balance_lo`, `pending_balance_hi`, and
-        `available_balance`.
-
-        For regular encryption, it is important that r is generated from a proper randomness source. But
-        for the `ConfigureAccount` instruction, it is already known that x is always 0. So r can just be
-        set Scalar::zero().
-
-        This means that the ElGamalCiphertext should simply be
-          ElGamalCiphertext {
-            msg_comm: 0 * H + 0 * G = 0
-            decrypt_handle: 0 * P = 0
-          }
-
-        This should just be encoded as [0; 64]
-    */
+    // The all-zero ciphertext [0; 64] is a valid encryption of zero
     confidential_transfer_account.pending_balance_lo = EncryptedBalance::zeroed();
     confidential_transfer_account.pending_balance_hi = EncryptedBalance::zeroed();
     confidential_transfer_account.available_balance = EncryptedBalance::zeroed();
 
     confidential_transfer_account.decryptable_available_balance = *decryptable_zero_balance;
-    confidential_transfer_account.allow_balance_credits = true.into();
+    confidential_transfer_account.allow_confidential_credits = true.into();
     confidential_transfer_account.pending_balance_credit_counter = 0.into();
     confidential_transfer_account.expected_pending_balance_credit_counter = 0.into();
     confidential_transfer_account.actual_pending_balance_credit_counter = 0.into();
-    confidential_transfer_account.withheld_amount = EncryptedWithheldAmount::zeroed();
+    confidential_transfer_account.allow_non_confidential_credits = true.into();
+
+    // if the mint is extended for fees, then initialize account for confidential
+    // transfer fees
+    if mint.get_extension::<TransferFeeConfig>().is_ok() {
+        let confidential_transfer_fee_amount =
+            token_account.init_extension::<ConfidentialTransferFeeAmount>(false)?;
+        confidential_transfer_fee_amount.withheld_amount = EncryptedWithheldAmount::zeroed();
+    }
 
     Ok(())
 }
@@ -186,13 +173,21 @@ fn process_approve_account(accounts: &[AccountInfo]) -> ProgramResult {
     let token_account_data = &mut token_account_info.data.borrow_mut();
     let mut token_account = StateWithExtensionsMut::<Account>::unpack(token_account_data)?;
 
+    if *mint_info.key != token_account.base.mint {
+        return Err(TokenError::MintMismatch.into());
+    }
+
     check_program_account(mint_info.owner)?;
     let mint_data = &mint_info.data.borrow_mut();
     let mint = StateWithExtensions::<Mint>::unpack(mint_data)?;
     let confidential_transfer_mint = mint.get_extension::<ConfidentialTransferMint>()?;
+    let maybe_confidential_transfer_mint_authority: Option<Pubkey> =
+        confidential_transfer_mint.authority.into();
+    let confidential_transfer_mint_authority =
+        maybe_confidential_transfer_mint_authority.ok_or(TokenError::NoAuthorityExists)?;
 
-    if authority_info.is_signer && *authority_info.key == confidential_transfer_mint.authority {
-        let mut confidential_transfer_state =
+    if authority_info.is_signer && *authority_info.key == confidential_transfer_mint_authority {
+        let confidential_transfer_state =
             token_account.get_extension_mut::<ConfidentialTransferAccount>()?;
         confidential_transfer_state.approved = true.into();
         Ok(())
@@ -209,7 +204,11 @@ fn process_empty_account(
 ) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
     let token_account_info = next_account_info(account_info_iter)?;
-    let instructions_sysvar_info = next_account_info(account_info_iter)?;
+
+    // zero-knowledge proof certifies that the available balance ciphertext holds
+    // the balance of 0.
+    let proof_context = verify_empty_account_proof(account_info_iter, proof_instruction_offset)?;
+
     let authority_info = next_account_info(account_info_iter)?;
     let authority_info_data_len = authority_info.data_len();
 
@@ -225,32 +224,23 @@ fn process_empty_account(
         account_info_iter.as_slice(),
     )?;
 
-    let mut confidential_transfer_account =
+    let confidential_transfer_account =
         token_account.get_extension_mut::<ConfidentialTransferAccount>()?;
 
-    let previous_instruction =
-        get_instruction_relative(proof_instruction_offset, instructions_sysvar_info)?;
-    let proof_data = decode_proof_instruction::<CloseAccountData>(
-        ProofInstruction::VerifyCloseAccount,
-        &previous_instruction,
-    )?;
-
-    if confidential_transfer_account.pending_balance_lo != EncryptedBalance::zeroed() {
-        msg!("Pending balance is not zero");
-        return Err(ProgramError::InvalidAccountData);
+    // Check that the encryption public key and ciphertext associated with the
+    // confidential extension account are consistent with those that were
+    // actually used to generate the zkp.
+    if confidential_transfer_account.elgamal_pubkey != proof_context.pubkey {
+        msg!("Encryption public-key mismatch");
+        return Err(TokenError::ConfidentialTransferElGamalPubkeyMismatch.into());
     }
-
-    if confidential_transfer_account.pending_balance_hi != EncryptedBalance::zeroed() {
-        msg!("Pending balance is not zero");
-        return Err(ProgramError::InvalidAccountData);
-    }
-
-    if confidential_transfer_account.available_balance != proof_data.ciphertext {
+    if confidential_transfer_account.available_balance != proof_context.ciphertext {
         msg!("Available balance mismatch");
         return Err(ProgramError::InvalidInstructionData);
     }
-
     confidential_transfer_account.available_balance = EncryptedBalance::zeroed();
+
+    // check that all balances are all-zero ciphertexts
     confidential_transfer_account.closable()?;
 
     Ok(())
@@ -266,7 +256,6 @@ fn process_deposit(
 ) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
     let token_account_info = next_account_info(account_info_iter)?;
-    let destination_token_account_info = next_account_info(account_info_iter)?;
     let mint_info = next_account_info(account_info_iter)?;
     let authority_info = next_account_info(account_info_iter)?;
     let authority_info_data_len = authority_info.data_len();
@@ -279,97 +268,75 @@ fn process_deposit(
         return Err(TokenError::MintDecimalsMismatch.into());
     }
 
-    // Process source account
-    {
-        check_program_account(token_account_info.owner)?;
-        let token_account_data = &mut token_account_info.data.borrow_mut();
-        let mut token_account = StateWithExtensionsMut::<Account>::unpack(token_account_data)?;
-
-        Processor::validate_owner(
-            program_id,
-            &token_account.base.owner,
-            authority_info,
-            authority_info_data_len,
-            account_info_iter.as_slice(),
-        )?;
-
-        if token_account.base.is_frozen() {
-            return Err(TokenError::AccountFrozen.into());
-        }
-
-        if token_account.base.mint != *mint_info.key {
-            return Err(TokenError::MintMismatch.into());
-        }
-
-        // Wrapped SOL deposits are not supported because lamports cannot be vanished.
-        assert!(!token_account.base.is_native());
-        token_account.base.amount = token_account
-            .base
-            .amount
-            .checked_sub(amount)
-            .ok_or(TokenError::Overflow)?;
-
-        token_account.pack_base();
+    if mint.get_extension::<NonTransferable>().is_ok() {
+        return Err(TokenError::NonTransferable.into());
     }
 
-    //
-    // Finished with the source token account at this point. Drop all references to it to avoid a
-    // double borrow if the source and destination accounts are the same
-    //
+    check_program_account(token_account_info.owner)?;
+    let token_account_data = &mut token_account_info.data.borrow_mut();
+    let mut token_account = StateWithExtensionsMut::<Account>::unpack(token_account_data)?;
 
-    // Process destination account
-    {
-        check_program_account(destination_token_account_info.owner)?;
-        let destination_token_account_data = &mut destination_token_account_info.data.borrow_mut();
-        let mut destination_token_account =
-            StateWithExtensionsMut::<Account>::unpack(destination_token_account_data)?;
+    Processor::validate_owner(
+        program_id,
+        &token_account.base.owner,
+        authority_info,
+        authority_info_data_len,
+        account_info_iter.as_slice(),
+    )?;
 
-        if destination_token_account.base.is_frozen() {
-            return Err(TokenError::AccountFrozen.into());
-        }
-
-        if destination_token_account.base.mint != *mint_info.key {
-            return Err(TokenError::MintMismatch.into());
-        }
-
-        let mut destination_confidential_transfer_account =
-            destination_token_account.get_extension_mut::<ConfidentialTransferAccount>()?;
-        destination_confidential_transfer_account.approved()?;
-
-        if !bool::from(&destination_confidential_transfer_account.allow_balance_credits) {
-            return Err(TokenError::ConfidentialTransferDepositsAndTransfersDisabled.into());
-        }
-
-        // Divide deposit into the low 16 and high 48 bits and then add to the appropriate pending
-        // ciphertexts
-        destination_confidential_transfer_account.pending_balance_lo = ops::add_to(
-            &destination_confidential_transfer_account.pending_balance_lo,
-            amount << PENDING_BALANCE_HI_BIT_LENGTH >> PENDING_BALANCE_HI_BIT_LENGTH,
-        )
-        .ok_or(ProgramError::InvalidInstructionData)?;
-
-        destination_confidential_transfer_account.pending_balance_hi = ops::add_to(
-            &destination_confidential_transfer_account.pending_balance_hi,
-            amount >> PENDING_BALANCE_LO_BIT_LENGTH,
-        )
-        .ok_or(ProgramError::InvalidInstructionData)?;
-
-        destination_confidential_transfer_account.pending_balance_credit_counter =
-            (u64::from(destination_confidential_transfer_account.pending_balance_credit_counter)
-                .checked_add(1)
-                .ok_or(ProgramError::InvalidInstructionData)?)
-            .into();
-
-        if u64::from(destination_confidential_transfer_account.pending_balance_credit_counter)
-            > u64::from(
-                destination_confidential_transfer_account.maximum_pending_balance_credit_counter,
-            )
-        {
-            return Err(TokenError::MaximumPendingBalanceCreditCounterExceeded.into());
-        }
+    if token_account.base.is_frozen() {
+        return Err(TokenError::AccountFrozen.into());
     }
+
+    if token_account.base.mint != *mint_info.key {
+        return Err(TokenError::MintMismatch.into());
+    }
+
+    // Wrapped SOL deposits are not supported because lamports cannot be vanished.
+    assert!(!token_account.base.is_native());
+
+    token_account.base.amount = token_account
+        .base
+        .amount
+        .checked_sub(amount)
+        .ok_or(TokenError::Overflow)?;
+    token_account.pack_base();
+
+    let confidential_transfer_account =
+        token_account.get_extension_mut::<ConfidentialTransferAccount>()?;
+    confidential_transfer_account.valid_as_destination()?;
+
+    // A deposit amount must be a 48-bit number
+    let (amount_lo, amount_hi) = verify_and_split_deposit_amount(amount)?;
+
+    // Prevent unnecessary ciphertext arithmetic syscalls if `amount_lo` or
+    // `amount_hi` is zero
+    if amount_lo > 0 {
+        confidential_transfer_account.pending_balance_lo =
+            syscall::add_to(&confidential_transfer_account.pending_balance_lo, amount_lo)
+                .ok_or(TokenError::CiphertextArithmeticFailed)?;
+    }
+    if amount_hi > 0 {
+        confidential_transfer_account.pending_balance_hi =
+            syscall::add_to(&confidential_transfer_account.pending_balance_hi, amount_hi)
+                .ok_or(TokenError::CiphertextArithmeticFailed)?;
+    }
+
+    confidential_transfer_account.increment_pending_balance_credit_counter()?;
 
     Ok(())
+}
+
+/// Verifies that a deposit amount is a 48-bit number and returns the least
+/// significant 16 bits and most significant 32 bits of the amount.
+#[cfg(feature = "zk-ops")]
+pub fn verify_and_split_deposit_amount(amount: u64) -> Result<(u64, u64), TokenError> {
+    if amount > MAXIMUM_DEPOSIT_TRANSFER_AMOUNT {
+        return Err(TokenError::MaximumDepositAmountExceeded);
+    }
+    let deposit_amount_lo = amount & (u16::MAX as u64);
+    let deposit_amount_hi = amount.checked_shr(u16::BITS).unwrap();
+    Ok((deposit_amount_lo, deposit_amount_hi))
 }
 
 /// Processes a [Withdraw] instruction.
@@ -384,9 +351,12 @@ fn process_withdraw(
 ) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
     let token_account_info = next_account_info(account_info_iter)?;
-    let destination_token_account_info = next_account_info(account_info_iter)?;
     let mint_info = next_account_info(account_info_iter)?;
-    let instructions_sysvar_info = next_account_info(account_info_iter)?;
+
+    // zero-knowledge proof certifies that the account has enough available balance
+    // to withdraw the amount.
+    let proof_context = verify_withdraw_proof(account_info_iter, proof_instruction_offset)?;
+
     let authority_info = next_account_info(account_info_iter)?;
     let authority_info_data_len = authority_info.data_len();
 
@@ -398,276 +368,317 @@ fn process_withdraw(
         return Err(TokenError::MintDecimalsMismatch.into());
     }
 
-    let previous_instruction =
-        get_instruction_relative(proof_instruction_offset, instructions_sysvar_info)?;
+    if mint.get_extension::<NonTransferable>().is_ok() {
+        return Err(TokenError::NonTransferable.into());
+    }
 
-    let proof_data = decode_proof_instruction::<WithdrawData>(
-        ProofInstruction::VerifyWithdraw,
-        &previous_instruction,
+    check_program_account(token_account_info.owner)?;
+    let token_account_data = &mut token_account_info.data.borrow_mut();
+    let mut token_account = StateWithExtensionsMut::<Account>::unpack(token_account_data)?;
+
+    Processor::validate_owner(
+        program_id,
+        &token_account.base.owner,
+        authority_info,
+        authority_info_data_len,
+        account_info_iter.as_slice(),
     )?;
 
-    // Process source account
-    {
-        check_program_account(token_account_info.owner)?;
-        let token_account_data = &mut token_account_info.data.borrow_mut();
-        let mut token_account = StateWithExtensionsMut::<Account>::unpack(token_account_data)?;
+    if token_account.base.is_frozen() {
+        return Err(TokenError::AccountFrozen.into());
+    }
 
-        Processor::validate_owner(
-            program_id,
-            &token_account.base.owner,
-            authority_info,
-            authority_info_data_len,
-            account_info_iter.as_slice(),
-        )?;
+    if token_account.base.mint != *mint_info.key {
+        return Err(TokenError::MintMismatch.into());
+    }
 
-        if token_account.base.is_frozen() {
-            return Err(TokenError::AccountFrozen.into());
-        }
+    // Wrapped SOL withdrawals are not supported because lamports cannot be
+    // apparated.
+    assert!(!token_account.base.is_native());
 
-        if token_account.base.mint != *mint_info.key {
-            return Err(TokenError::MintMismatch.into());
-        }
+    let confidential_transfer_account =
+        token_account.get_extension_mut::<ConfidentialTransferAccount>()?;
+    confidential_transfer_account.valid_as_source()?;
 
-        let mut confidential_transfer_account =
-            token_account.get_extension_mut::<ConfidentialTransferAccount>()?;
+    // Check that the encryption public key associated with the confidential
+    // extension is consistent with the public key that was actually used to
+    // generate the zkp.
+    if confidential_transfer_account.elgamal_pubkey != proof_context.pubkey {
+        return Err(TokenError::ConfidentialTransferElGamalPubkeyMismatch.into());
+    }
 
+    // Prevent unnecessary ciphertext arithmetic syscalls if the withdraw amount is
+    // zero
+    if amount > 0 {
         confidential_transfer_account.available_balance =
-            ops::subtract_from(&confidential_transfer_account.available_balance, amount)
-                .ok_or(ProgramError::InvalidInstructionData)?;
-
-        if confidential_transfer_account.available_balance != proof_data.final_ciphertext {
-            return Err(TokenError::ConfidentialTransferBalanceMismatch.into());
-        }
-
-        confidential_transfer_account.decryptable_available_balance =
-            new_decryptable_available_balance;
+            syscall::subtract_from(&confidential_transfer_account.available_balance, amount)
+                .ok_or(TokenError::CiphertextArithmeticFailed)?;
+    }
+    // Check that the final available balance ciphertext is consistent with the
+    // actual ciphertext for which the zero-knowledge proof was generated for.
+    if confidential_transfer_account.available_balance != proof_context.final_ciphertext {
+        return Err(TokenError::ConfidentialTransferBalanceMismatch.into());
     }
 
-    //
-    // Finished with the source token account at this point. Drop all references to it to avoid a
-    // double borrow if the source and destination accounts are the same
-    //
-
-    // Process destination account
-    {
-        check_program_account(destination_token_account_info.owner)?;
-        let destination_token_account_data = &mut destination_token_account_info.data.borrow_mut();
-        let mut destination_token_account =
-            StateWithExtensionsMut::<Account>::unpack(destination_token_account_data)?;
-
-        if destination_token_account.base.is_frozen() {
-            return Err(TokenError::AccountFrozen.into());
-        }
-
-        if destination_token_account.base.mint != *mint_info.key {
-            return Err(TokenError::MintMismatch.into());
-        }
-
-        // Wrapped SOL withdrawals are not supported because lamports cannot be apparated.
-        assert!(!destination_token_account.base.is_native());
-        destination_token_account.base.amount = destination_token_account
-            .base
-            .amount
-            .checked_add(amount)
-            .ok_or(TokenError::Overflow)?;
-
-        destination_token_account.pack_base();
-    }
+    confidential_transfer_account.decryptable_available_balance = new_decryptable_available_balance;
+    token_account.base.amount = token_account
+        .base
+        .amount
+        .checked_add(amount)
+        .ok_or(TokenError::Overflow)?;
+    token_account.pack_base();
 
     Ok(())
 }
 
-/// Processes an [Transfer] instruction.
+/// Processes a [Transfer] or [TransferWithSplitProofs] instruction.
+#[allow(clippy::too_many_arguments)]
 #[cfg(feature = "zk-ops")]
 fn process_transfer(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     new_source_decryptable_available_balance: DecryptableBalance,
     proof_instruction_offset: i64,
+    split_proof_context_state_accounts: bool,
+    no_op_on_uninitialized_split_context_state: bool,
+    close_split_context_state_on_execution: bool,
+    source_decrypt_handles: &SourceDecryptHandles,
 ) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
-    let token_account_info = next_account_info(account_info_iter)?;
-    let destination_token_account_info = next_account_info(account_info_iter)?;
+    let source_account_info = next_account_info(account_info_iter)?;
     let mint_info = next_account_info(account_info_iter)?;
-    let instructions_sysvar_info = next_account_info(account_info_iter)?;
-    let authority_info = next_account_info(account_info_iter)?;
+    let destination_account_info = next_account_info(account_info_iter)?;
 
     check_program_account(mint_info.owner)?;
-    let mint_data = &mint_info.data.borrow_mut();
-    let mint = StateWithExtensions::<Mint>::unpack(mint_data)?;
+    let mint_data = mint_info.data.borrow_mut();
+    let mint = StateWithExtensions::<Mint>::unpack(&mint_data)?;
+
+    if mint.get_extension::<NonTransferable>().is_ok() {
+        return Err(TokenError::NonTransferable.into());
+    }
     let confidential_transfer_mint = mint.get_extension::<ConfidentialTransferMint>()?;
 
-    let previous_instruction =
-        get_instruction_relative(proof_instruction_offset, instructions_sysvar_info)?;
-
-    if let Ok(transfer_fee_config) = mint.get_extension::<TransferFeeConfig>() {
-        // mint is extended for fees
-        let proof_data = decode_proof_instruction::<TransferWithFeeData>(
-            ProofInstruction::VerifyTransferWithFee,
-            &previous_instruction,
+    // A `Transfer` instruction must be accompanied by a zero-knowledge proof
+    // instruction that certify the validity of the transfer amounts. The kind
+    // of zero-knowledge proof instruction depends on whether a transfer incurs
+    // a fee or not.
+    //   - If the mint is not extended for fees or the instruction is for a
+    //     self-transfer, then
+    //   transfer fee is not required.
+    //   - If the mint is extended for fees and the instruction is not a
+    //     self-transfer, then
+    //   transfer fee is required.
+    let authority_info = if mint.get_extension::<TransferFeeConfig>().is_err() {
+        // Transfer fee is not required. Decode the zero-knowledge proof as
+        // `TransferData`.
+        //
+        // The zero-knowledge proof certifies that:
+        //   1. the transfer amount is encrypted in the correct form
+        //   2. the source account has enough balance to send the transfer amount
+        let maybe_proof_context = verify_transfer_proof(
+            account_info_iter,
+            proof_instruction_offset,
+            split_proof_context_state_accounts,
+            no_op_on_uninitialized_split_context_state,
+            close_split_context_state_on_execution,
+            source_decrypt_handles,
         )?;
+        // If `maybe_proof_context` is `None`, then this means that
+        // `no_op_on_uninitialized_split_context_state` is true and a required context
+        // state account is not yet initialized. Even if this is the case, we
+        // follow through with the rest of the transfer logic to perform all the
+        // necessary checks for a transfer to be safe.
 
-        if proof_data.transfer_with_fee_pubkeys.auditor_pubkey
-            != confidential_transfer_mint.auditor_encryption_pubkey
-        {
-            return Err(TokenError::ConfidentialTransferElGamalPubkeyMismatch.into());
+        // If `close_split_context_state_on_execution` is `true`, then the source
+        // account authority info is located after the lamport destination,
+        // context state authority, and zk token proof program account infos.
+        // Flush out these account infos.
+        if close_split_context_state_on_execution && maybe_proof_context.is_none() {
+            let _lamport_destination_account_info = next_account_info(account_info_iter)?;
+            let _context_state_authority_info = next_account_info(account_info_iter)?;
+            let _zk_token_proof_program_info = next_account_info(account_info_iter)?;
         }
 
-        // `withdraw_withheld_authority` ElGamal pubkey in proof data and mint must match
-        if proof_data
-            .transfer_with_fee_pubkeys
-            .withdraw_withheld_authority_pubkey
-            != confidential_transfer_mint.withdraw_withheld_authority_encryption_pubkey
-        {
-            return Err(TokenError::ConfidentialTransferElGamalPubkeyMismatch.into());
+        let authority_info = next_account_info(account_info_iter)?;
+
+        // Check that the auditor encryption public key associated wth the confidential
+        // mint is consistent with what was actually used to generate the zkp.
+        if let Some(ref proof_context) = maybe_proof_context {
+            if !confidential_transfer_mint
+                .auditor_elgamal_pubkey
+                .equals(&proof_context.transfer_pubkeys.auditor)
+            {
+                return Err(TokenError::ConfidentialTransferElGamalPubkeyMismatch.into());
+            }
         }
-
-        // fee parameters in proof data and mint must match
-        let epoch = Clock::get()?.epoch;
-        let (maximum_fee, transfer_fee_basis_points) =
-            if u64::from(transfer_fee_config.newer_transfer_fee.epoch) < epoch {
-                (
-                    u64::from(transfer_fee_config.older_transfer_fee.maximum_fee),
-                    u16::from(
-                        transfer_fee_config
-                            .older_transfer_fee
-                            .transfer_fee_basis_points,
-                    ),
-                )
-            } else {
-                (
-                    u64::from(transfer_fee_config.newer_transfer_fee.maximum_fee),
-                    u16::from(
-                        transfer_fee_config
-                            .newer_transfer_fee
-                            .transfer_fee_basis_points,
-                    ),
-                )
-            };
-
-        if u64::from(proof_data.fee_parameters.maximum_fee) != maximum_fee
-            || u16::from(proof_data.fee_parameters.fee_rate_basis_points)
-                != transfer_fee_basis_points
-        {
-            return Err(TokenError::FeeParametersMismatch.into());
-        }
-
-        let source_ciphertext_lo = EncryptedBalance::from((
-            proof_data.ciphertext_lo.commitment,
-            proof_data.ciphertext_lo.source_handle,
-        ));
-        let source_ciphertext_hi = EncryptedBalance::from((
-            proof_data.ciphertext_hi.commitment,
-            proof_data.ciphertext_hi.source_handle,
-        ));
 
         process_source_for_transfer(
             program_id,
-            token_account_info,
+            source_account_info,
             mint_info,
             authority_info,
             account_info_iter.as_slice(),
-            &proof_data.transfer_with_fee_pubkeys.source_pubkey,
-            &source_ciphertext_lo,
-            &source_ciphertext_hi,
+            maybe_proof_context.as_ref(),
             new_source_decryptable_available_balance,
         )?;
 
-        let destination_ciphertext_lo = EncryptedBalance::from((
-            proof_data.ciphertext_lo.commitment,
-            proof_data.ciphertext_lo.destination_handle,
-        ));
-        let destination_ciphertext_hi = EncryptedBalance::from((
-            proof_data.ciphertext_hi.commitment,
-            proof_data.ciphertext_hi.destination_handle,
-        ));
-
-        let fee_ciphertext = if token_account_info.key == destination_token_account_info.key {
-            None
-        } else {
-            Some(proof_data.fee_ciphertext)
-        };
-
         process_destination_for_transfer(
-            destination_token_account_info,
+            destination_account_info,
             mint_info,
-            &proof_data.transfer_with_fee_pubkeys.destination_pubkey,
-            &destination_ciphertext_lo,
-            &destination_ciphertext_hi,
-            fee_ciphertext,
+            maybe_proof_context.as_ref(),
         )?;
+
+        if maybe_proof_context.is_none() {
+            msg!(
+                "Context states not fully initialized: returning with no op; transfer is NOT yet
+            executed"
+            );
+        }
+        authority_info
     } else {
-        // mint is not extended for fees
-        let proof_data = decode_proof_instruction::<TransferData>(
-            ProofInstruction::VerifyTransfer,
-            &previous_instruction,
+        // Transfer fee is required.
+        let transfer_fee_config = mint.get_extension::<TransferFeeConfig>()?;
+        let fee_parameters = transfer_fee_config.get_epoch_fee(Clock::get()?.epoch);
+
+        // Decode the zero-knowledge proof as `TransferWithFeeData`.
+        //
+        // The zero-knowledge proof certifies that:
+        //   1. the transfer amount is encrypted in the correct form
+        //   2. the source account has enough balance to send the transfer amount
+        //   3. the transfer fee is computed correctly and encrypted in the correct form
+        let maybe_proof_context = verify_transfer_with_fee_proof(
+            account_info_iter,
+            proof_instruction_offset,
+            split_proof_context_state_accounts,
+            no_op_on_uninitialized_split_context_state,
+            close_split_context_state_on_execution,
+            source_decrypt_handles,
+            fee_parameters,
         )?;
 
-        if proof_data.transfer_pubkeys.auditor_pubkey
-            != confidential_transfer_mint.auditor_encryption_pubkey
-        {
-            return Err(TokenError::ConfidentialTransferElGamalPubkeyMismatch.into());
+        // If `maybe_proof_context` is `None`, then this means that
+        // `no_op_on_uninitialized_split_context_state` is true and a required context
+        // state account is not yet initialized. Even if this is the case, we
+        // follow through with the rest of the transfer with fee logic to
+        // perform all the necessary checks to be safe.
+
+        // If `close_split_context_state_on_execution` is `true`, then the source
+        // account authority info is located after the lamport destination,
+        // context state authority, and zk token proof program account infos.
+        // Flush out these account infos.
+        if close_split_context_state_on_execution && maybe_proof_context.is_none() {
+            let _lamport_destination_account_info = next_account_info(account_info_iter)?;
+            let _context_state_authority_info = next_account_info(account_info_iter)?;
+            let _zk_token_proof_program_info = next_account_info(account_info_iter)?;
         }
 
-        let source_ciphertext_lo = EncryptedBalance::from((
-            proof_data.ciphertext_lo.commitment,
-            proof_data.ciphertext_lo.source_handle,
-        ));
-        let source_ciphertext_hi = EncryptedBalance::from((
-            proof_data.ciphertext_hi.commitment,
-            proof_data.ciphertext_hi.source_handle,
-        ));
+        let authority_info = next_account_info(account_info_iter)?;
 
-        process_source_for_transfer(
+        // Check that the encryption public keys associated with the mint confidential
+        // transfer and confidential transfer fee extensions are consistent with
+        // the keys that were used to generate the zkp.
+        if let Some(ref proof_context) = maybe_proof_context {
+            if !confidential_transfer_mint
+                .auditor_elgamal_pubkey
+                .equals(&proof_context.transfer_with_fee_pubkeys.auditor)
+            {
+                return Err(TokenError::ConfidentialTransferElGamalPubkeyMismatch.into());
+            }
+        }
+
+        let confidential_transfer_fee_config =
+            mint.get_extension::<ConfidentialTransferFeeConfig>()?;
+
+        // Check that the withdraw withheld authority ElGamal public key in the mint is
+        // consistent with what was used to generate the zkp.
+        if let Some(ref proof_context) = maybe_proof_context {
+            if proof_context
+                .transfer_with_fee_pubkeys
+                .withdraw_withheld_authority
+                != confidential_transfer_fee_config.withdraw_withheld_authority_elgamal_pubkey
+            {
+                return Err(TokenError::ConfidentialTransferElGamalPubkeyMismatch.into());
+            }
+        }
+
+        process_source_for_transfer_with_fee(
             program_id,
-            token_account_info,
+            source_account_info,
             mint_info,
             authority_info,
             account_info_iter.as_slice(),
-            &proof_data.transfer_pubkeys.source_pubkey,
-            &source_ciphertext_lo,
-            &source_ciphertext_hi,
+            maybe_proof_context.as_ref(),
             new_source_decryptable_available_balance,
         )?;
 
-        let destination_ciphertext_lo = EncryptedBalance::from((
-            proof_data.ciphertext_lo.commitment,
-            proof_data.ciphertext_lo.destination_handle,
-        ));
-        let destination_ciphertext_hi = EncryptedBalance::from((
-            proof_data.ciphertext_hi.commitment,
-            proof_data.ciphertext_hi.destination_handle,
-        ));
-
-        process_destination_for_transfer(
-            destination_token_account_info,
+        let is_self_transfer = source_account_info.key == destination_account_info.key;
+        process_destination_for_transfer_with_fee(
+            destination_account_info,
             mint_info,
-            &proof_data.transfer_pubkeys.destination_pubkey,
-            &destination_ciphertext_lo,
-            &destination_ciphertext_hi,
-            None,
+            maybe_proof_context.as_ref(),
+            is_self_transfer,
         )?;
+
+        if maybe_proof_context.is_none() {
+            msg!(
+                "Context state not fully initialized: returning with no op; transfer is NOT yet executed"
+            );
+        }
+        authority_info
+    };
+
+    #[cfg(feature = "confidential-hook")]
+    if let Some(program_id) = transfer_hook::get_program_id(&mint) {
+        // set transferring flags, scope the borrow to avoid double-borrow during CPI
+        {
+            let mut source_account_data = source_account_info.data.borrow_mut();
+            let mut source_account =
+                StateWithExtensionsMut::<Account>::unpack(&mut source_account_data)?;
+            transfer_hook::set_transferring(&mut source_account)?;
+        }
+        {
+            let mut destination_account_data = destination_account_info.data.borrow_mut();
+            let mut destination_account =
+                StateWithExtensionsMut::<Account>::unpack(&mut destination_account_data)?;
+            transfer_hook::set_transferring(&mut destination_account)?;
+        }
+
+        // can't doubly-borrow the mint data either
+        drop(mint_data);
+
+        // Since the amount is unknown during a confidential transfer, pass in
+        // u64::MAX as a convention.
+        spl_transfer_hook_interface::onchain::invoke_execute(
+            &program_id,
+            source_account_info.clone(),
+            mint_info.clone(),
+            destination_account_info.clone(),
+            authority_info.clone(),
+            account_info_iter.as_slice(),
+            u64::MAX,
+        )?;
+
+        // unset transferring flag
+        transfer_hook::unset_transferring(source_account_info)?;
+        transfer_hook::unset_transferring(destination_account_info)?;
     }
 
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 #[cfg(feature = "zk-ops")]
 fn process_source_for_transfer(
     program_id: &Pubkey,
-    token_account_info: &AccountInfo,
+    source_account_info: &AccountInfo,
     mint_info: &AccountInfo,
     authority_info: &AccountInfo,
     signers: &[AccountInfo],
-    source_encryption_pubkey: &EncryptionPubkey,
-    source_ciphertext_lo: &EncryptedBalance,
-    source_ciphertext_hi: &EncryptedBalance,
+    maybe_proof_context: Option<&TransferProofContextInfo>,
     new_source_decryptable_available_balance: DecryptableBalance,
 ) -> ProgramResult {
-    check_program_account(token_account_info.owner)?;
+    check_program_account(source_account_info.owner)?;
     let authority_info_data_len = authority_info.data_len();
-    let token_account_data = &mut token_account_info.data.borrow_mut();
+    let token_account_data = &mut source_account_info.data.borrow_mut();
     let mut token_account = StateWithExtensionsMut::<Account>::unpack(token_account_data)?;
 
     Processor::validate_owner(
@@ -686,40 +697,51 @@ fn process_source_for_transfer(
         return Err(TokenError::MintMismatch.into());
     }
 
-    let mut confidential_transfer_account =
+    let confidential_transfer_account =
         token_account.get_extension_mut::<ConfidentialTransferAccount>()?;
-    confidential_transfer_account.approved()?;
-    if *source_encryption_pubkey != confidential_transfer_account.encryption_pubkey {
-        return Err(TokenError::ConfidentialTransferElGamalPubkeyMismatch.into());
-    }
+    confidential_transfer_account.valid_as_source()?;
 
-    let new_source_available_balance = {
-        ops::subtract_with_lo_hi(
+    if let Some(proof_context) = maybe_proof_context {
+        // Check that the source encryption public key is consistent with what was
+        // actually used to generate the zkp.
+        if proof_context.transfer_pubkeys.source != confidential_transfer_account.elgamal_pubkey {
+            return Err(TokenError::ConfidentialTransferElGamalPubkeyMismatch.into());
+        }
+
+        let source_transfer_amount_lo =
+            transfer_amount_source_ciphertext(&proof_context.ciphertext_lo);
+        let source_transfer_amount_hi =
+            transfer_amount_source_ciphertext(&proof_context.ciphertext_hi);
+
+        let new_source_available_balance = syscall::subtract_with_lo_hi(
             &confidential_transfer_account.available_balance,
-            source_ciphertext_lo,
-            source_ciphertext_hi,
+            &source_transfer_amount_lo,
+            &source_transfer_amount_hi,
         )
-        .ok_or(ProgramError::InvalidInstructionData)?
-    };
+        .ok_or(TokenError::CiphertextArithmeticFailed)?;
 
-    confidential_transfer_account.available_balance = new_source_available_balance;
-    confidential_transfer_account.decryptable_available_balance =
-        new_source_decryptable_available_balance;
+        // Check that the computed available balance is consistent with what was
+        // actually used to generate the zkp on the client side.
+        if new_source_available_balance != proof_context.new_source_ciphertext {
+            return Err(TokenError::ConfidentialTransferBalanceMismatch.into());
+        }
+
+        confidential_transfer_account.available_balance = new_source_available_balance;
+        confidential_transfer_account.decryptable_available_balance =
+            new_source_decryptable_available_balance;
+    }
 
     Ok(())
 }
 
 #[cfg(feature = "zk-ops")]
 fn process_destination_for_transfer(
-    destination_token_account_info: &AccountInfo,
+    destination_account_info: &AccountInfo,
     mint_info: &AccountInfo,
-    destination_encryption_pubkey: &EncryptionPubkey,
-    destination_ciphertext_lo: &EncryptedBalance,
-    destination_ciphertext_hi: &EncryptedBalance,
-    encrypted_fee: Option<EncryptedFee>,
+    maybe_transfer_proof_context_info: Option<&TransferProofContextInfo>,
 ) -> ProgramResult {
-    check_program_account(destination_token_account_info.owner)?;
-    let destination_token_account_data = &mut destination_token_account_info.data.borrow_mut();
+    check_program_account(destination_account_info.owner)?;
+    let destination_token_account_data = &mut destination_account_info.data.borrow_mut();
     let mut destination_token_account =
         StateWithExtensionsMut::<Account>::unpack(destination_token_account_data)?;
 
@@ -731,78 +753,208 @@ fn process_destination_for_transfer(
         return Err(TokenError::MintMismatch.into());
     }
 
-    let mut destination_confidential_transfer_account =
+    if memo_required(&destination_token_account) {
+        check_previous_sibling_instruction_is_memo()?;
+    }
+
+    let destination_confidential_transfer_account =
         destination_token_account.get_extension_mut::<ConfidentialTransferAccount>()?;
-    destination_confidential_transfer_account.approved()?;
+    destination_confidential_transfer_account.valid_as_destination()?;
 
-    if !bool::from(&destination_confidential_transfer_account.allow_balance_credits) {
-        return Err(TokenError::ConfidentialTransferDepositsAndTransfersDisabled.into());
-    }
+    if let Some(proof_context) = maybe_transfer_proof_context_info {
+        if proof_context.transfer_pubkeys.destination
+            != destination_confidential_transfer_account.elgamal_pubkey
+        {
+            return Err(TokenError::ConfidentialTransferElGamalPubkeyMismatch.into());
+        }
 
-    if *destination_encryption_pubkey != destination_confidential_transfer_account.encryption_pubkey
-    {
-        return Err(TokenError::ConfidentialTransferElGamalPubkeyMismatch.into());
-    }
+        let destination_ciphertext_lo =
+            transfer_amount_destination_ciphertext(&proof_context.ciphertext_lo);
+        let destination_ciphertext_hi =
+            transfer_amount_destination_ciphertext(&proof_context.ciphertext_hi);
 
-    let new_destination_pending_balance_lo = ops::add(
-        &destination_confidential_transfer_account.pending_balance_lo,
-        destination_ciphertext_lo,
-    )
-    .ok_or(ProgramError::InvalidInstructionData)?;
-
-    let new_destination_pending_balance_hi = ops::add(
-        &destination_confidential_transfer_account.pending_balance_hi,
-        destination_ciphertext_hi,
-    )
-    .ok_or(ProgramError::InvalidInstructionData)?;
-
-    let new_destination_pending_balance_credit_counter =
-        u64::from(destination_confidential_transfer_account.pending_balance_credit_counter)
-            .checked_add(1)
-            .ok_or(ProgramError::InvalidInstructionData)?;
-
-    if new_destination_pending_balance_credit_counter
-        > u64::from(
-            destination_confidential_transfer_account.maximum_pending_balance_credit_counter,
-        )
-    {
-        return Err(TokenError::MaximumPendingBalanceCreditCounterExceeded.into());
-    }
-
-    destination_confidential_transfer_account.pending_balance_lo =
-        new_destination_pending_balance_lo;
-    destination_confidential_transfer_account.pending_balance_hi =
-        new_destination_pending_balance_hi;
-    destination_confidential_transfer_account.pending_balance_credit_counter =
-        new_destination_pending_balance_credit_counter.into();
-
-    // update destination account withheld fees
-    if let Some(ciphertext_fee) = encrypted_fee {
-        let ciphertext_fee_destination: EncryptedWithheldAmount =
-            (ciphertext_fee.commitment, ciphertext_fee.destination_handle).into();
-        let ciphertext_fee_withheld_authority: EncryptedWithheldAmount = (
-            ciphertext_fee.commitment,
-            ciphertext_fee.withdraw_withheld_authority_handle,
-        )
-            .into();
-
-        // subtract fee from destination pending balance
-        let new_destination_pending_balance = ops::subtract(
+        destination_confidential_transfer_account.pending_balance_lo = syscall::add(
             &destination_confidential_transfer_account.pending_balance_lo,
-            &ciphertext_fee_destination,
+            &destination_ciphertext_lo,
         )
-        .ok_or(ProgramError::InvalidInstructionData)?;
+        .ok_or(TokenError::CiphertextArithmeticFailed)?;
 
-        // add encrypted fee to current withheld fee
-        let new_withheld_amount = ops::add(
-            &destination_confidential_transfer_account.withheld_amount,
-            &ciphertext_fee_withheld_authority,
+        destination_confidential_transfer_account.pending_balance_hi = syscall::add(
+            &destination_confidential_transfer_account.pending_balance_hi,
+            &destination_ciphertext_hi,
         )
-        .ok_or(ProgramError::InvalidInstructionData)?;
+        .ok_or(TokenError::CiphertextArithmeticFailed)?;
 
-        destination_confidential_transfer_account.pending_balance_lo =
-            new_destination_pending_balance;
-        destination_confidential_transfer_account.withheld_amount = new_withheld_amount;
+        destination_confidential_transfer_account.increment_pending_balance_credit_counter()?;
+    }
+
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+#[cfg(feature = "zk-ops")]
+fn process_source_for_transfer_with_fee(
+    program_id: &Pubkey,
+    source_account_info: &AccountInfo,
+    mint_info: &AccountInfo,
+    authority_info: &AccountInfo,
+    signers: &[AccountInfo],
+    maybe_proof_context: Option<&TransferWithFeeProofContextInfo>,
+    new_source_decryptable_available_balance: DecryptableBalance,
+) -> ProgramResult {
+    check_program_account(source_account_info.owner)?;
+    let authority_info_data_len = authority_info.data_len();
+    let token_account_data = &mut source_account_info.data.borrow_mut();
+    let mut token_account = StateWithExtensionsMut::<Account>::unpack(token_account_data)?;
+
+    Processor::validate_owner(
+        program_id,
+        &token_account.base.owner,
+        authority_info,
+        authority_info_data_len,
+        signers,
+    )?;
+
+    if token_account.base.is_frozen() {
+        return Err(TokenError::AccountFrozen.into());
+    }
+
+    if token_account.base.mint != *mint_info.key {
+        return Err(TokenError::MintMismatch.into());
+    }
+
+    let confidential_transfer_account =
+        token_account.get_extension_mut::<ConfidentialTransferAccount>()?;
+    confidential_transfer_account.valid_as_source()?;
+
+    if let Some(proof_context) = maybe_proof_context {
+        // Check that the source encryption public key is consistent with what was
+        // actually used to generate the zkp.
+        if proof_context.transfer_with_fee_pubkeys.source
+            != confidential_transfer_account.elgamal_pubkey
+        {
+            return Err(TokenError::ConfidentialTransferElGamalPubkeyMismatch.into());
+        }
+
+        let source_transfer_amount_lo =
+            transfer_amount_source_ciphertext(&proof_context.ciphertext_lo);
+        let source_transfer_amount_hi =
+            transfer_amount_source_ciphertext(&proof_context.ciphertext_hi);
+
+        let new_source_available_balance = syscall::subtract_with_lo_hi(
+            &confidential_transfer_account.available_balance,
+            &source_transfer_amount_lo,
+            &source_transfer_amount_hi,
+        )
+        .ok_or(TokenError::CiphertextArithmeticFailed)?;
+
+        // Check that the computed available balance is consistent with what was
+        // actually used to generate the zkp on the client side.
+        if new_source_available_balance != proof_context.new_source_ciphertext {
+            return Err(TokenError::ConfidentialTransferBalanceMismatch.into());
+        }
+
+        confidential_transfer_account.available_balance = new_source_available_balance;
+        confidential_transfer_account.decryptable_available_balance =
+            new_source_decryptable_available_balance;
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "zk-ops")]
+fn process_destination_for_transfer_with_fee(
+    destination_account_info: &AccountInfo,
+    mint_info: &AccountInfo,
+    maybe_proof_context: Option<&TransferWithFeeProofContextInfo>,
+    is_self_transfer: bool,
+) -> ProgramResult {
+    check_program_account(destination_account_info.owner)?;
+    let destination_token_account_data = &mut destination_account_info.data.borrow_mut();
+    let mut destination_token_account =
+        StateWithExtensionsMut::<Account>::unpack(destination_token_account_data)?;
+
+    if destination_token_account.base.is_frozen() {
+        return Err(TokenError::AccountFrozen.into());
+    }
+
+    if destination_token_account.base.mint != *mint_info.key {
+        return Err(TokenError::MintMismatch.into());
+    }
+
+    if memo_required(&destination_token_account) {
+        check_previous_sibling_instruction_is_memo()?;
+    }
+
+    let destination_confidential_transfer_account =
+        destination_token_account.get_extension_mut::<ConfidentialTransferAccount>()?;
+    destination_confidential_transfer_account.valid_as_destination()?;
+
+    if let Some(proof_context) = maybe_proof_context {
+        if proof_context.transfer_with_fee_pubkeys.destination
+            != destination_confidential_transfer_account.elgamal_pubkey
+        {
+            return Err(TokenError::ConfidentialTransferElGamalPubkeyMismatch.into());
+        }
+
+        let destination_transfer_amount_lo =
+            transfer_amount_destination_ciphertext(&proof_context.ciphertext_lo);
+        let destination_transfer_amount_hi =
+            transfer_amount_destination_ciphertext(&proof_context.ciphertext_hi);
+
+        destination_confidential_transfer_account.pending_balance_lo = syscall::add(
+            &destination_confidential_transfer_account.pending_balance_lo,
+            &destination_transfer_amount_lo,
+        )
+        .ok_or(TokenError::CiphertextArithmeticFailed)?;
+
+        destination_confidential_transfer_account.pending_balance_hi = syscall::add(
+            &destination_confidential_transfer_account.pending_balance_hi,
+            &destination_transfer_amount_hi,
+        )
+        .ok_or(TokenError::CiphertextArithmeticFailed)?;
+
+        destination_confidential_transfer_account.increment_pending_balance_credit_counter()?;
+
+        // process transfer fee
+        if !is_self_transfer {
+            // Decode lo and hi fee amounts encrypted under the destination encryption
+            // public key
+            let destination_fee_lo =
+                fee_amount_destination_ciphertext(&proof_context.fee_ciphertext_lo);
+            let destination_fee_hi =
+                fee_amount_destination_ciphertext(&proof_context.fee_ciphertext_hi);
+
+            // Subtract the fee amount from the destination pending balance
+            destination_confidential_transfer_account.pending_balance_lo = syscall::subtract(
+                &destination_confidential_transfer_account.pending_balance_lo,
+                &destination_fee_lo,
+            )
+            .ok_or(TokenError::CiphertextArithmeticFailed)?;
+            destination_confidential_transfer_account.pending_balance_hi = syscall::subtract(
+                &destination_confidential_transfer_account.pending_balance_hi,
+                &destination_fee_hi,
+            )
+            .ok_or(TokenError::CiphertextArithmeticFailed)?;
+
+            // Decode lo and hi fee amounts encrypted under the withdraw authority
+            // encryption public key
+            let withdraw_withheld_authority_fee_lo =
+                fee_amount_withdraw_withheld_authority_ciphertext(&proof_context.fee_ciphertext_lo);
+            let withdraw_withheld_authority_fee_hi =
+                fee_amount_withdraw_withheld_authority_ciphertext(&proof_context.fee_ciphertext_hi);
+
+            let destination_confidential_transfer_fee_amount =
+                destination_token_account.get_extension_mut::<ConfidentialTransferFeeAmount>()?;
+
+            // Add the fee amount to the destination withheld fee
+            destination_confidential_transfer_fee_amount.withheld_amount = syscall::add_with_lo_hi(
+                &destination_confidential_transfer_fee_amount.withheld_amount,
+                &withdraw_withheld_authority_fee_lo,
+                &withdraw_withheld_authority_fee_hi,
+            )
+            .ok_or(TokenError::CiphertextArithmeticFailed)?;
+        }
     }
 
     Ok(())
@@ -835,15 +987,15 @@ fn process_apply_pending_balance(
         account_info_iter.as_slice(),
     )?;
 
-    let mut confidential_transfer_account =
+    let confidential_transfer_account =
         token_account.get_extension_mut::<ConfidentialTransferAccount>()?;
 
-    confidential_transfer_account.available_balance = ops::add_with_lo_hi(
+    confidential_transfer_account.available_balance = syscall::add_with_lo_hi(
         &confidential_transfer_account.available_balance,
         &confidential_transfer_account.pending_balance_lo,
         &confidential_transfer_account.pending_balance_hi,
     )
-    .ok_or(ProgramError::InvalidInstructionData)?;
+    .ok_or(TokenError::CiphertextArithmeticFailed)?;
 
     confidential_transfer_account.actual_pending_balance_credit_counter =
         confidential_transfer_account.pending_balance_credit_counter;
@@ -858,11 +1010,12 @@ fn process_apply_pending_balance(
     Ok(())
 }
 
-/// Processes an [DisableBalanceCredits] or [EnableBalanceCredits] instruction.
-fn process_allow_balance_credits(
+/// Processes a [DisableConfidentialCredits] or [EnableConfidentialCredits]
+/// instruction.
+fn process_allow_confidential_credits(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
-    allow_balance_credits: bool,
+    allow_confidential_credits: bool,
 ) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
     let token_account_info = next_account_info(account_info_iter)?;
@@ -881,272 +1034,42 @@ fn process_allow_balance_credits(
         account_info_iter.as_slice(),
     )?;
 
-    let mut confidential_transfer_account =
+    let confidential_transfer_account =
         token_account.get_extension_mut::<ConfidentialTransferAccount>()?;
-    confidential_transfer_account.allow_balance_credits = allow_balance_credits.into();
+    confidential_transfer_account.allow_confidential_credits = allow_confidential_credits.into();
 
     Ok(())
 }
 
-/// Processes an [WithdrawWithheldTokensFromMint] instruction.
-#[cfg(feature = "zk-ops")]
-fn process_withdraw_withheld_tokens_from_mint(
+/// Processes an [DisableNonConfidentialCredits] or
+/// [EnableNonConfidentialCredits] instruction.
+fn process_allow_non_confidential_credits(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
-    proof_instruction_offset: i64,
+    allow_non_confidential_credits: bool,
 ) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
-    let mint_account_info = next_account_info(account_info_iter)?;
-    let destination_account_info = next_account_info(account_info_iter)?;
-    let instructions_sysvar_info = next_account_info(account_info_iter)?;
+    let token_account_info = next_account_info(account_info_iter)?;
     let authority_info = next_account_info(account_info_iter)?;
     let authority_info_data_len = authority_info.data_len();
 
-    let mut mint_data = mint_account_info.data.borrow_mut();
-    let mut mint = StateWithExtensionsMut::<Mint>::unpack(&mut mint_data)?;
+    check_program_account(token_account_info.owner)?;
+    let token_account_data = &mut token_account_info.data.borrow_mut();
+    let mut token_account = StateWithExtensionsMut::<Account>::unpack(token_account_data)?;
 
-    // mint must be extended for fees
-    {
-        let transfer_fee_config = mint.get_extension::<TransferFeeConfig>()?;
-        let withdraw_withheld_authority =
-            Option::<Pubkey>::from(transfer_fee_config.withdraw_withheld_authority)
-                .ok_or(TokenError::NoAuthorityExists)?;
-        Processor::validate_owner(
-            program_id,
-            &withdraw_withheld_authority,
-            authority_info,
-            authority_info_data_len,
-            account_info_iter.as_slice(),
-        )?;
-    } // free `transfer_fee_config` to borrow `confidential_transfer_mint` as mutable
-
-    let confidential_transfer_mint = mint.get_extension_mut::<ConfidentialTransferMint>()?;
-
-    // basic checks for the destination account - must be extended for confidential transfers
-    let mut destination_account_data = destination_account_info.data.borrow_mut();
-    let mut destination_account =
-        StateWithExtensionsMut::<Account>::unpack(&mut destination_account_data)?;
-    if destination_account.base.mint != *mint_account_info.key {
-        return Err(TokenError::MintMismatch.into());
-    }
-    if destination_account.base.is_frozen() {
-        return Err(TokenError::AccountFrozen.into());
-    }
-    let mut destination_confidential_transfer_account =
-        destination_account.get_extension_mut::<ConfidentialTransferAccount>()?;
-    destination_confidential_transfer_account.approved()?;
-    // verify consistency of proof data
-    let previous_instruction =
-        get_instruction_relative(proof_instruction_offset, instructions_sysvar_info)?;
-    let proof_data = decode_proof_instruction::<WithdrawWithheldTokensData>(
-        ProofInstruction::VerifyWithdrawWithheldTokens,
-        &previous_instruction,
-    )?;
-
-    // withdraw withheld authority ElGamal pubkey should match in the proof data and mint
-    if proof_data.withdraw_withheld_authority_pubkey
-        != confidential_transfer_mint.withdraw_withheld_authority_encryption_pubkey
-    {
-        return Err(TokenError::ConfidentialTransferElGamalPubkeyMismatch.into());
-    }
-
-    // destination ElGamal pubkey should match in the proof data and destination account
-    if proof_data.destination_pubkey != destination_confidential_transfer_account.encryption_pubkey
-    {
-        return Err(TokenError::ConfidentialTransferElGamalPubkeyMismatch.into());
-    }
-
-    // withheld amount ciphertext must match in the proof data and mint
-    if proof_data.withdraw_withheld_authority_ciphertext
-        != confidential_transfer_mint.withheld_amount
-    {
-        return Err(TokenError::ConfidentialTransferBalanceMismatch.into());
-    }
-
-    // The proof data contains the mint withheld amount encrypted under the destination ElGamal pubkey.
-    // This amount should be added to the destination pending balance.
-    let new_destination_pending_balance = ops::add(
-        &destination_confidential_transfer_account.pending_balance_lo,
-        &proof_data.destination_ciphertext,
-    )
-    .ok_or(ProgramError::InvalidInstructionData)?;
-
-    destination_confidential_transfer_account.pending_balance_lo = new_destination_pending_balance;
-
-    // fee is now withdrawn, so zero out mint withheld amount
-    confidential_transfer_mint.withheld_amount = EncryptedWithheldAmount::zeroed();
-
-    Ok(())
-}
-
-#[cfg(feature = "zk-ops")]
-fn process_withdraw_withheld_tokens_from_accounts(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    num_token_accounts: u8,
-    proof_instruction_offset: i64,
-) -> ProgramResult {
-    let account_info_iter = &mut accounts.iter();
-    let mint_account_info = next_account_info(account_info_iter)?;
-    let destination_account_info = next_account_info(account_info_iter)?;
-    let instructions_sysvar_info = next_account_info(account_info_iter)?;
-    let authority_info = next_account_info(account_info_iter)?;
-    let authority_info_data_len = authority_info.data_len();
-    let account_infos = account_info_iter.as_slice();
-    let num_signers = account_infos
-        .len()
-        .saturating_sub(num_token_accounts as usize);
-
-    let mut mint_data = mint_account_info.data.borrow_mut();
-    let mut mint = StateWithExtensionsMut::<Mint>::unpack(&mut mint_data)?;
-
-    // mint must be extended for fees
-    let transfer_fee_config = mint.get_extension::<TransferFeeConfig>()?;
-    let withdraw_withheld_authority =
-        Option::<Pubkey>::from(transfer_fee_config.withdraw_withheld_authority)
-            .ok_or(TokenError::NoAuthorityExists)?;
     Processor::validate_owner(
         program_id,
-        &withdraw_withheld_authority,
+        &token_account.base.owner,
         authority_info,
         authority_info_data_len,
-        &account_infos[..num_signers],
+        account_info_iter.as_slice(),
     )?;
 
-    let mut destination_account_data = destination_account_info.data.borrow_mut();
-    let mut destination_account =
-        StateWithExtensionsMut::<Account>::unpack(&mut destination_account_data)?;
-    if destination_account.base.mint != *mint_account_info.key {
-        return Err(TokenError::MintMismatch.into());
-    }
-    if destination_account.base.is_frozen() {
-        return Err(TokenError::AccountFrozen.into());
-    }
+    let confidential_transfer_account =
+        token_account.get_extension_mut::<ConfidentialTransferAccount>()?;
+    confidential_transfer_account.allow_non_confidential_credits =
+        allow_non_confidential_credits.into();
 
-    // sum up the withheld amounts in all the accounts
-    let mut aggregate_withheld_amount = EncryptedWithheldAmount::zeroed();
-    for account_info in &account_infos[num_signers..] {
-        // self-harvest, can't double-borrow the underlying data
-        if account_info.key == destination_account_info.key {
-            let confidential_transfer_destination_account = destination_account
-                .get_extension_mut::<ConfidentialTransferAccount>()
-                .map_err(|_| TokenError::InvalidState)?;
-
-            aggregate_withheld_amount = ops::add(
-                &aggregate_withheld_amount,
-                &confidential_transfer_destination_account.withheld_amount,
-            )
-            .ok_or(ProgramError::InvalidInstructionData)?;
-
-            confidential_transfer_destination_account.withheld_amount =
-                EncryptedWithheldAmount::zeroed();
-        } else {
-            match harvest_from_account(mint_account_info.key, account_info) {
-                Ok(encrypted_withheld_amount) => {
-                    aggregate_withheld_amount =
-                        ops::add(&aggregate_withheld_amount, &encrypted_withheld_amount)
-                            .ok_or(ProgramError::InvalidInstructionData)?;
-                }
-                Err(e) => {
-                    msg!("Error harvesting from {}: {}", account_info.key, e);
-                }
-            }
-        }
-    }
-
-    let mut destination_confidential_transfer_account =
-        destination_account.get_extension_mut::<ConfidentialTransferAccount>()?;
-    destination_confidential_transfer_account.approved()?;
-    // verify consistency of proof data
-    let previous_instruction =
-        get_instruction_relative(proof_instruction_offset, instructions_sysvar_info)?;
-    let proof_data = decode_proof_instruction::<WithdrawWithheldTokensData>(
-        ProofInstruction::VerifyWithdrawWithheldTokens,
-        &previous_instruction,
-    )?;
-
-    // withdraw withheld authority ElGamal pubkey should match in the proof data and mint
-    let confidential_transfer_mint = mint.get_extension_mut::<ConfidentialTransferMint>()?;
-    if proof_data.withdraw_withheld_authority_pubkey
-        != confidential_transfer_mint.withdraw_withheld_authority_encryption_pubkey
-    {
-        return Err(TokenError::ConfidentialTransferElGamalPubkeyMismatch.into());
-    }
-
-    // destination ElGamal pubkey should match in the proof data and destination account
-    if proof_data.destination_pubkey != destination_confidential_transfer_account.encryption_pubkey
-    {
-        return Err(TokenError::ConfidentialTransferElGamalPubkeyMismatch.into());
-    }
-
-    // withheld amount ciphertext must match in the proof data and mint
-    if proof_data.withdraw_withheld_authority_ciphertext != aggregate_withheld_amount {
-        return Err(TokenError::ConfidentialTransferBalanceMismatch.into());
-    }
-
-    // add the sum of the withheld fees to destination pending balance
-    let new_destination_pending_balance = ops::add(
-        &destination_confidential_transfer_account.pending_balance_lo,
-        &proof_data.destination_ciphertext,
-    )
-    .ok_or(ProgramError::InvalidInstructionData)?;
-
-    destination_confidential_transfer_account.pending_balance_lo = new_destination_pending_balance;
-
-    Ok(())
-}
-
-#[cfg(feature = "zk-ops")]
-fn harvest_from_account<'a, 'b>(
-    mint_key: &'b Pubkey,
-    token_account_info: &'b AccountInfo<'a>,
-) -> Result<EncryptedWithheldAmount, TokenError> {
-    let mut token_account_data = token_account_info.data.borrow_mut();
-    let mut token_account = StateWithExtensionsMut::<Account>::unpack(&mut token_account_data)
-        .map_err(|_| TokenError::InvalidState)?;
-    if token_account.base.mint != *mint_key {
-        return Err(TokenError::MintMismatch);
-    }
-    check_program_account(token_account_info.owner).map_err(|_| TokenError::InvalidState)?;
-
-    let confidential_transfer_token_account = token_account
-        .get_extension_mut::<ConfidentialTransferAccount>()
-        .map_err(|_| TokenError::InvalidState)?;
-
-    let withheld_amount = confidential_transfer_token_account.withheld_amount;
-    confidential_transfer_token_account.withheld_amount = EncryptedWithheldAmount::zeroed();
-
-    Ok(withheld_amount)
-}
-
-/// Processes an [HarvestWithheldTokensToMint] instruction.
-#[cfg(feature = "zk-ops")]
-fn process_harvest_withheld_tokens_to_mint(accounts: &[AccountInfo]) -> ProgramResult {
-    let account_info_iter = &mut accounts.iter();
-    let mint_account_info = next_account_info(account_info_iter)?;
-    let token_account_infos = account_info_iter.as_slice();
-
-    let mut mint_data = mint_account_info.data.borrow_mut();
-    let mut mint = StateWithExtensionsMut::<Mint>::unpack(&mut mint_data)?;
-    mint.get_extension::<TransferFeeConfig>()?;
-    let confidential_transfer_mint = mint.get_extension_mut::<ConfidentialTransferMint>()?;
-
-    for token_account_info in token_account_infos {
-        match harvest_from_account(mint_account_info.key, token_account_info) {
-            Ok(withheld_amount) => {
-                let new_mint_withheld_amount = ops::add(
-                    &confidential_transfer_mint.withheld_amount,
-                    &withheld_amount,
-                )
-                .ok_or(ProgramError::InvalidInstructionData)?;
-
-                confidential_transfer_mint.withheld_amount = new_mint_withheld_amount;
-            }
-            Err(e) => {
-                msg!("Error harvesting from {}: {}", token_account_info.key, e);
-            }
-        }
-    }
     Ok(())
 }
 
@@ -1161,24 +1084,32 @@ pub(crate) fn process_instruction(
     match decode_instruction_type(input)? {
         ConfidentialTransferInstruction::InitializeMint => {
             msg!("ConfidentialTransferInstruction::InitializeMint");
+            let data = decode_instruction_data::<InitializeMintData>(input)?;
             process_initialize_mint(
                 accounts,
-                decode_instruction_data::<ConfidentialTransferMint>(input)?,
+                &data.authority,
+                data.auto_approve_new_accounts,
+                &data.auditor_elgamal_pubkey,
             )
         }
         ConfidentialTransferInstruction::UpdateMint => {
             msg!("ConfidentialTransferInstruction::UpdateMint");
+            let data = decode_instruction_data::<UpdateMintData>(input)?;
             process_update_mint(
                 accounts,
-                decode_instruction_data::<ConfidentialTransferMint>(input)?,
+                data.auto_approve_new_accounts,
+                &data.auditor_elgamal_pubkey,
             )
         }
         ConfidentialTransferInstruction::ConfigureAccount => {
             msg!("ConfidentialTransferInstruction::ConfigureAccount");
+            let data = decode_instruction_data::<ConfigureAccountInstructionData>(input)?;
             process_configure_account(
                 program_id,
                 accounts,
-                decode_instruction_data::<ConfigureAccountInstructionData>(input)?,
+                &data.decryptable_zero_balance,
+                &data.maximum_pending_balance_credit_counter,
+                data.proof_instruction_offset as i64,
             )
         }
         ConfidentialTransferInstruction::ApproveAccount => {
@@ -1227,27 +1158,14 @@ pub(crate) fn process_instruction(
                     accounts,
                     data.new_source_decryptable_available_balance,
                     data.proof_instruction_offset as i64,
+                    false,
+                    false,
+                    false,
+                    &SourceDecryptHandles::zeroed(),
                 )
             }
             #[cfg(not(feature = "zk-ops"))]
             Err(ProgramError::InvalidInstructionData)
-        }
-        ConfidentialTransferInstruction::TransferWithFee => {
-            msg!("ConfidentialTransferInstruction::TransferWithFee");
-            #[cfg(feature = "zk-ops")]
-            {
-                let data = decode_instruction_data::<TransferWithFeeInstructionData>(input)?;
-                process_transfer(
-                    program_id,
-                    accounts,
-                    data.new_source_decryptable_available_balance,
-                    data.proof_instruction_offset as i64,
-                )
-            }
-            #[cfg(not(feature = "zk-ops"))]
-            {
-                Err(ProgramError::InvalidInstructionData)
-            }
         }
         ConfidentialTransferInstruction::ApplyPendingBalance => {
             msg!("ConfidentialTransferInstruction::ApplyPendingBalance");
@@ -1264,54 +1182,41 @@ pub(crate) fn process_instruction(
                 Err(ProgramError::InvalidInstructionData)
             }
         }
-        ConfidentialTransferInstruction::DisableBalanceCredits => {
-            msg!("ConfidentialTransferInstruction::DisableBalanceCredits");
-            process_allow_balance_credits(program_id, accounts, false)
+        ConfidentialTransferInstruction::DisableConfidentialCredits => {
+            msg!("ConfidentialTransferInstruction::DisableConfidentialCredits");
+            process_allow_confidential_credits(program_id, accounts, false)
         }
-        ConfidentialTransferInstruction::EnableBalanceCredits => {
-            msg!("ConfidentialTransferInstruction::EnableBalanceCredits");
-            process_allow_balance_credits(program_id, accounts, true)
+        ConfidentialTransferInstruction::EnableConfidentialCredits => {
+            msg!("ConfidentialTransferInstruction::EnableConfidentialCredits");
+            process_allow_confidential_credits(program_id, accounts, true)
         }
-        ConfidentialTransferInstruction::WithdrawWithheldTokensFromMint => {
-            msg!("ConfidentialTransferInstruction::WithdrawWithheldTokensFromMint");
-            #[cfg(feature = "zk-ops")]
-            {
-                let data = decode_instruction_data::<WithdrawWithheldTokensFromMintData>(input)?;
-                process_withdraw_withheld_tokens_from_mint(
-                    program_id,
-                    accounts,
-                    data.proof_instruction_offset as i64,
-                )
-            }
-            #[cfg(not(feature = "zk-ops"))]
-            Err(ProgramError::InvalidInstructionData)
+        ConfidentialTransferInstruction::DisableNonConfidentialCredits => {
+            msg!("ConfidentialTransferInstruction::DisableNonConfidentialCredits");
+            process_allow_non_confidential_credits(program_id, accounts, false)
         }
-        ConfidentialTransferInstruction::WithdrawWithheldTokensFromAccounts => {
-            msg!("ConfidentialTransferInstruction::WithdrawWithheldTokensFromAccounts");
+        ConfidentialTransferInstruction::EnableNonConfidentialCredits => {
+            msg!("ConfidentialTransferInstruction::EnableNonConfidentialCredits");
+            process_allow_non_confidential_credits(program_id, accounts, true)
+        }
+        ConfidentialTransferInstruction::TransferWithSplitProofs => {
+            msg!("ConfidentialTransferInstruction::TransferWithSplitProofs");
             #[cfg(feature = "zk-ops")]
             {
                 let data =
-                    decode_instruction_data::<WithdrawWithheldTokensFromAccountsData>(input)?;
-                process_withdraw_withheld_tokens_from_accounts(
+                    decode_instruction_data::<TransferWithSplitProofsInstructionData>(input)?;
+                process_transfer(
                     program_id,
                     accounts,
-                    data.num_token_accounts,
-                    data.proof_instruction_offset as i64,
+                    data.new_source_decryptable_available_balance,
+                    0,
+                    true,
+                    data.no_op_on_uninitialized_split_context_state.into(),
+                    data.close_split_context_state_on_execution.into(),
+                    &data.source_decrypt_handles,
                 )
             }
             #[cfg(not(feature = "zk-ops"))]
             Err(ProgramError::InvalidInstructionData)
-        }
-        ConfidentialTransferInstruction::HarvestWithheldTokensToMint => {
-            msg!("ConfidentialTransferInstruction::HarvestWithheldTokensToMint");
-            #[cfg(feature = "zk-ops")]
-            {
-                process_harvest_withheld_tokens_to_mint(accounts)
-            }
-            #[cfg(not(feature = "zk-ops"))]
-            {
-                Err(ProgramError::InvalidInstructionData)
-            }
         }
     }
 }

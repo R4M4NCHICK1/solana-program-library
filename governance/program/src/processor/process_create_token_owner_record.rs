@@ -1,21 +1,25 @@
 //! Program state processor
 
-use solana_program::{
-    account_info::{next_account_info, AccountInfo},
-    entrypoint::ProgramResult,
-    pubkey::Pubkey,
-    rent::Rent,
-    sysvar::Sysvar,
-};
-use spl_governance_tools::account::create_and_serialize_account_signed;
-
-use crate::{
-    error::GovernanceError,
-    state::{
-        enums::GovernanceAccountType,
-        realm::get_realm_data,
-        token_owner_record::{get_token_owner_record_address_seeds, TokenOwnerRecordV2},
+use {
+    crate::{
+        error::GovernanceError,
+        state::{
+            enums::GovernanceAccountType,
+            realm::get_realm_data,
+            token_owner_record::{
+                get_token_owner_record_address_seeds, TokenOwnerRecordV2,
+                TOKEN_OWNER_RECORD_LAYOUT_VERSION,
+            },
+        },
     },
+    solana_program::{
+        account_info::{next_account_info, AccountInfo},
+        entrypoint::ProgramResult,
+        pubkey::Pubkey,
+        rent::Rent,
+        sysvar::Sysvar,
+    },
+    spl_governance_tools::account::create_and_serialize_account_signed,
 };
 
 /// Processes CreateTokenOwnerRecord instruction
@@ -48,9 +52,9 @@ pub fn process_create_token_owner_record(
         governing_token_mint: *governing_token_mint_info.key,
         governance_delegate: None,
         unrelinquished_votes_count: 0,
-        total_votes_count: 0,
         outstanding_proposal_count: 0,
-        reserved: [0; 7],
+        version: TOKEN_OWNER_RECORD_LAYOUT_VERSION,
+        reserved: [0; 6],
         reserved_v2: [0; 128],
     };
 
@@ -66,5 +70,6 @@ pub fn process_create_token_owner_record(
         program_id,
         system_info,
         &rent,
+        0,
     )
 }

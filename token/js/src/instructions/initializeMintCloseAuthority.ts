@@ -1,28 +1,27 @@
 import { struct, u8 } from '@solana/buffer-layout';
-import { publicKey } from '@solana/buffer-layout-utils';
-import { AccountMeta, PublicKey, TransactionInstruction } from '@solana/web3.js';
+import type { AccountMeta, PublicKey } from '@solana/web3.js';
+import { TransactionInstruction } from '@solana/web3.js';
+import { programSupportsExtensions } from '../constants.js';
 import {
-    TokenUnsupportedInstructionError,
     TokenInvalidInstructionDataError,
     TokenInvalidInstructionKeysError,
     TokenInvalidInstructionProgramError,
     TokenInvalidInstructionTypeError,
-} from '../errors';
-import { TokenInstruction } from './types';
-import { programSupportsExtensions } from '../constants';
+    TokenUnsupportedInstructionError,
+} from '../errors.js';
+import { TokenInstruction } from './types.js';
+import { COptionPublicKeyLayout } from '../serialization.js';
 
 /** TODO: docs */
 export interface InitializeMintCloseAuthorityInstructionData {
     instruction: TokenInstruction.InitializeMintCloseAuthority;
-    closeAuthorityOption: 1 | 0;
-    closeAuthority: PublicKey;
+    closeAuthority: PublicKey | null;
 }
 
 /** TODO: docs */
 export const initializeMintCloseAuthorityInstructionData = struct<InitializeMintCloseAuthorityInstructionData>([
     u8('instruction'),
-    u8('closeAuthorityOption'),
-    publicKey('closeAuthority'),
+    new COptionPublicKeyLayout('closeAuthority'),
 ]);
 
 /**
@@ -48,8 +47,7 @@ export function createInitializeMintCloseAuthorityInstruction(
     initializeMintCloseAuthorityInstructionData.encode(
         {
             instruction: TokenInstruction.InitializeMintCloseAuthority,
-            closeAuthorityOption: closeAuthority ? 1 : 0,
-            closeAuthority: closeAuthority || new PublicKey(0),
+            closeAuthority,
         },
         data
     );
@@ -126,8 +124,7 @@ export function decodeInitializeMintCloseAuthorityInstructionUnchecked({
     keys: [mint],
     data,
 }: TransactionInstruction): DecodedInitializeMintCloseAuthorityInstructionUnchecked {
-    const { instruction, closeAuthorityOption, closeAuthority } =
-        initializeMintCloseAuthorityInstructionData.decode(data);
+    const { instruction, closeAuthority } = initializeMintCloseAuthorityInstructionData.decode(data);
 
     return {
         programId,
@@ -136,7 +133,7 @@ export function decodeInitializeMintCloseAuthorityInstructionUnchecked({
         },
         data: {
             instruction,
-            closeAuthority: closeAuthorityOption ? closeAuthority : null,
+            closeAuthority,
         },
     };
 }

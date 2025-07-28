@@ -1,7 +1,7 @@
 # SPL Governance
 
 SPL Governance is a program the chief purpose of which is to provide core building blocks and primitives to create
-Decentralized Autonomous Organizations (DAOs) on Solana blockchain.
+Decentralized Autonomous Organizations (DAOs) on the Solana blockchain.
 
 The program is DAO type and asset type agnostic and can be used to build any type of DAOs
 which can own and manage any type of assets.
@@ -56,7 +56,7 @@ There are two UIs available which showcase the programs capabilities:
 
   It's a good starting point for developers to learn about the program and interact with it
 
-- [Governance UI](https://github.com/solana-labs/governance-ui) project build together
+- [Governance UI](https://github.com/solana-labs/governance-ui) project built together
   with the [MNGO](https://mango.markets/) team: [governance-ui](https://realms.today)
 
   This is advanced, user friendly and tasks oriented UI used by most of the existing DAOs on Solana
@@ -73,7 +73,7 @@ Discord server: [spl-governance-discord](https://discord.gg/VsPbrK2hJk)
 
 ## Program Accounts
 
-The diagram belows shows an illustrative configuration of the program accounts when used to control upgrades
+The diagram below shows an illustrative configuration of the program accounts when used to control upgrades
 of multiple programs through proposals
 
 ![Accounts diagram](./resources/governance-accounts.jpg)
@@ -154,7 +154,7 @@ during the voting period but still reaches the required Yes vote threshold it ca
 using FinalizeVote instruction.
 Once all Proposal transactions are executed the Proposal enters Completed state.
 
-In the Executing state an instruction can be run by any one at any time after the `instruction_hold_up_time` period has
+In the Executing state an instruction can be run by any one at any time after the `hold_up_time` period has
 transpired.
 
 ### ProposalTransaction
@@ -197,3 +197,8 @@ the DAO until the token is distributed.
 ### Proposal Workflow
 
 ![Proposal Workflow](./resources/governance-workflow.jpg)
+
+## Audit
+
+The repository [README](https://github.com/solana-labs/solana-program-library#audits)
+contains information about program audits.

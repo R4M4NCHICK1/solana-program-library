@@ -44,7 +44,7 @@ pub enum TokenError {
     #[error("Invalid number of required signers")]
     InvalidNumberOfRequiredSigners,
     /// State is uninitialized.
-    #[error("State is unititialized")]
+    #[error("State is uninitialized")]
     UninitializedState,
 
     // 10
@@ -119,13 +119,15 @@ pub enum TokenError {
     /// Transfer fee exceeds maximum of 10,000 basis points
     #[error("Transfer fee exceeds maximum of 10,000 basis points")]
     TransferFeeExceedsMaximum,
-    /// Mint required for this account to transfer tokens, use `transfer_checked` or `transfer_checked_with_fee`
+    /// Mint required for this account to transfer tokens, use
+    /// `transfer_checked` or `transfer_checked_with_fee`
     #[error("Mint required for this account to transfer tokens, use `transfer_checked` or `transfer_checked_with_fee`")]
     MintRequiredForTransfer,
     /// Calculated fee does not match expected fee
     #[error("Calculated fee does not match expected fee")]
     FeeMismatch,
-    /// Fee parameters associated with confidential transfer zero-knowledge proofs do not match fee parameters in mint
+    /// Fee parameters associated with confidential transfer zero-knowledge
+    /// proofs do not match fee parameters in mint
     #[error(
         "Fee parameters associated with zero-knowledge proofs do not match fee parameters in mint"
     )]
@@ -135,27 +137,112 @@ pub enum TokenError {
     ImmutableOwner,
 
     // 35
-    /// An account can only be closed if its withheld fee balance is zero, harvest fees to the
-    /// mint and try again
+    /// An account can only be closed if its withheld fee balance is zero,
+    /// harvest fees to the mint and try again
     #[error("An account can only be closed if its withheld fee balance is zero, harvest fees to the mint and try again")]
     AccountHasWithheldTransferFees,
-
-    /// No memo in previous instruction; required for recipient to receive a transfer
+    /// No memo in previous instruction; required for recipient to receive a
+    /// transfer
     #[error("No memo in previous instruction; required for recipient to receive a transfer")]
     NoMemo,
     /// Transfer is disabled for this mint
     #[error("Transfer is disabled for this mint")]
     NonTransferable,
-    /// Non-transferable tokens can't be minted to an account without immutable ownership
+    /// Non-transferable tokens can't be minted to an account without immutable
+    /// ownership
     #[error("Non-transferable tokens can't be minted to an account without immutable ownership")]
     NonTransferableNeedsImmutableOwnership,
-    /// The total number of `Deposit` and `Transfer` instructions to an account cannot exceed the
-    /// associated `maximum_pending_balance_credit_counter`
+    /// The total number of `Deposit` and `Transfer` instructions to an account
+    /// cannot exceed the associated
+    /// `maximum_pending_balance_credit_counter`
     #[error(
         "The total number of `Deposit` and `Transfer` instructions to an account cannot exceed
             the associated `maximum_pending_balance_credit_counter`"
     )]
     MaximumPendingBalanceCreditCounterExceeded,
+
+    // 40
+    /// The deposit amount for the confidential extension exceeds the maximum
+    /// limit
+    #[error("Deposit amount exceeds maximum limit")]
+    MaximumDepositAmountExceeded,
+    /// CPI Guard cannot be enabled or disabled in CPI
+    #[error("CPI Guard cannot be enabled or disabled in CPI")]
+    CpiGuardSettingsLocked,
+    /// CPI Guard is enabled, and a program attempted to transfer user funds
+    /// without using a delegate
+    #[error("CPI Guard is enabled, and a program attempted to transfer user funds via CPI without using a delegate")]
+    CpiGuardTransferBlocked,
+    /// CPI Guard is enabled, and a program attempted to burn user funds without
+    /// using a delegate
+    #[error(
+        "CPI Guard is enabled, and a program attempted to burn user funds via CPI without using a delegate"
+    )]
+    CpiGuardBurnBlocked,
+    /// CPI Guard is enabled, and a program attempted to close an account
+    /// without returning lamports to owner
+    #[error("CPI Guard is enabled, and a program attempted to close an account via CPI without returning lamports to owner")]
+    CpiGuardCloseAccountBlocked,
+
+    // 45
+    /// CPI Guard is enabled, and a program attempted to approve a delegate
+    #[error("CPI Guard is enabled, and a program attempted to approve a delegate via CPI")]
+    CpiGuardApproveBlocked,
+    /// CPI Guard is enabled, and a program attempted to add or replace an
+    /// authority
+    #[error(
+        "CPI Guard is enabled, and a program attempted to add or replace an authority via CPI"
+    )]
+    CpiGuardSetAuthorityBlocked,
+    /// Account ownership cannot be changed while CPI Guard is enabled
+    #[error("Account ownership cannot be changed while CPI Guard is enabled")]
+    CpiGuardOwnerChangeBlocked,
+    /// Extension not found in account data
+    #[error("Extension not found in account data")]
+    ExtensionNotFound,
+    /// Account does not accept non-confidential transfers
+    #[error("Non-confidential transfers disabled")]
+    NonConfidentialTransfersDisabled,
+
+    // 50
+    /// An account can only be closed if the confidential withheld fee is zero
+    #[error("An account can only be closed if the confidential withheld fee is zero")]
+    ConfidentialTransferFeeAccountHasWithheldFee,
+    /// A mint or an account is initialized to an invalid combination of
+    /// extensions
+    #[error("A mint or an account is initialized to an invalid combination of extensions")]
+    InvalidExtensionCombination,
+    /// Extension allocation with overwrite must use the same length
+    #[error("Extension allocation with overwrite must use the same length")]
+    InvalidLengthForAlloc,
+    /// Failed to decrypt a confidential transfer account
+    #[error("Failed to decrypt a confidential transfer account")]
+    AccountDecryption,
+    /// Failed to generate a zero-knowledge proof needed for a token instruction
+    #[error("Failed to generate proof")]
+    ProofGeneration,
+
+    // 55
+    /// An invalid proof instruction offset was provided
+    #[error("An invalid proof instruction offset was provided")]
+    InvalidProofInstructionOffset,
+    /// Harvest of withheld tokens to mint is disabled
+    #[error("Harvest of withheld tokens to mint is disabled")]
+    HarvestToMintDisabled,
+    /// Split proof context state accounts not supported for instruction
+    #[error("Split proof context state accounts not supported for instruction")]
+    SplitProofContextStateAccountsNotSupported,
+    /// Not enough proof context state accounts provided
+    #[error("Not enough proof context state accounts provided")]
+    NotEnoughProofContextStateAccounts,
+    /// Ciphertext is malformed
+    #[error("Ciphertext is malformed")]
+    MalformedCiphertext,
+
+    // 60
+    /// Ciphertext arithmetic failed
+    #[error("Ciphertext arithmetic failed")]
+    CiphertextArithmeticFailed,
 }
 impl From<TokenError> for ProgramError {
     fn from(e: TokenError) -> Self {
@@ -267,6 +354,69 @@ impl PrintProgramError for TokenError {
             }
             TokenError::MaximumPendingBalanceCreditCounterExceeded => {
                 msg!("The total number of `Deposit` and `Transfer` instructions to an account cannot exceed the associated `maximum_pending_balance_credit_counter`");
+            }
+            TokenError::MaximumDepositAmountExceeded => {
+                msg!("Deposit amount exceeds maximum limit")
+            }
+            TokenError::CpiGuardSettingsLocked => {
+                msg!("CPI Guard status cannot be changed in CPI")
+            }
+            TokenError::CpiGuardTransferBlocked => {
+                msg!("CPI Guard is enabled, and a program attempted to transfer user funds without using a delegate")
+            }
+            TokenError::CpiGuardBurnBlocked => {
+                msg!("CPI Guard is enabled, and a program attempted to burn user funds without using a delegate")
+            }
+            TokenError::CpiGuardCloseAccountBlocked => {
+                msg!("CPI Guard is enabled, and a program attempted to close an account without returning lamports to owner")
+            }
+            TokenError::CpiGuardApproveBlocked => {
+                msg!("CPI Guard is enabled, and a program attempted to approve a delegate")
+            }
+            TokenError::CpiGuardSetAuthorityBlocked => {
+                msg!("CPI Guard is enabled, and a program attempted to add or change an authority")
+            }
+            TokenError::CpiGuardOwnerChangeBlocked => {
+                msg!("Account ownership cannot be changed while CPI Guard is enabled")
+            }
+            TokenError::ExtensionNotFound => {
+                msg!("Extension not found in account data")
+            }
+            TokenError::NonConfidentialTransfersDisabled => {
+                msg!("Non-confidential transfers disabled")
+            }
+            TokenError::ConfidentialTransferFeeAccountHasWithheldFee => {
+                msg!("Account has non-zero confidential withheld fee")
+            }
+            TokenError::InvalidExtensionCombination => {
+                msg!("Mint or account is initialized to an invalid combination of extensions")
+            }
+            TokenError::InvalidLengthForAlloc => {
+                msg!("Extension allocation with overwrite must use the same length")
+            }
+            TokenError::AccountDecryption => {
+                msg!("Failed to decrypt a confidential transfer account")
+            }
+            TokenError::ProofGeneration => {
+                msg!("Failed to generate proof")
+            }
+            TokenError::InvalidProofInstructionOffset => {
+                msg!("An invalid proof instruction offset was provided")
+            }
+            TokenError::HarvestToMintDisabled => {
+                msg!("Harvest of withheld tokens to mint is disabled")
+            }
+            TokenError::SplitProofContextStateAccountsNotSupported => {
+                msg!("Split proof context state accounts not supported for instruction")
+            }
+            TokenError::NotEnoughProofContextStateAccounts => {
+                msg!("Not enough proof context state accounts provided")
+            }
+            TokenError::MalformedCiphertext => {
+                msg!("Ciphertext is malformed")
+            }
+            TokenError::CiphertextArithmeticFailed => {
+                msg!("Ciphertext arithmetic failed")
             }
         }
     }

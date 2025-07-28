@@ -1,14 +1,16 @@
-// Program test does not support calling a raw program entrypoint, only `process_instruction`
-#![cfg(feature = "test-bpf")]
+// Program test does not support calling a raw program entrypoint, only
+// `process_instruction`
+#![cfg(feature = "test-sbf")]
 
-use solana_program_test::*;
-use solana_sdk::{
-    account::Account,
-    instruction::InstructionError,
-    instruction::{AccountMeta, Instruction},
-    pubkey::Pubkey,
-    signature::Signer,
-    transaction::{Transaction, TransactionError},
+use {
+    solana_program_test::*,
+    solana_sdk::{
+        account::Account,
+        instruction::{AccountMeta, Instruction, InstructionError},
+        pubkey::Pubkey,
+        signature::Signer,
+        transaction::{Transaction, TransactionError},
+    },
 };
 
 #[tokio::test]
@@ -19,7 +21,7 @@ async fn assert_instruction_count() {
     let shared_key = Pubkey::new_unique();
 
     let mut program_test = ProgramTest::new(
-        "spl_shared_memory", // Run the BPF version with `cargo test-bpf`
+        "spl_shared_memory", // Run the BPF version with `cargo test-sbf`
         program_id,
         None,
     );
@@ -59,7 +61,7 @@ async fn test_helloworld() {
     let shared_key = Pubkey::new_unique();
 
     let mut program_test = ProgramTest::new(
-        "spl_shared_memory", // Run the BPF version with `cargo test-bpf`
+        "spl_shared_memory", // Run the BPF version with `cargo test-sbf`
         program_id,
         None,
     );

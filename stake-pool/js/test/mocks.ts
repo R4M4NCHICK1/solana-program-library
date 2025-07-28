@@ -1,7 +1,15 @@
-import { AccountInfo, LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js';
+import { AccountInfo, LAMPORTS_PER_SOL, PublicKey, StakeProgram } from '@solana/web3.js';
 import BN from 'bn.js';
 import { ValidatorStakeInfo } from '../src';
-import { ValidatorStakeInfoStatus, AccountLayout, ValidatorListLayout } from '../src/layouts';
+import { AccountLayout, TOKEN_PROGRAM_ID } from '@solana/spl-token';
+import { ValidatorListLayout, ValidatorStakeInfoStatus } from '../src/layouts';
+
+export const CONSTANTS = {
+  poolTokenAccount: new PublicKey('GQkqTamwqjaNDfsbNm7r3aXPJ4oTSqKC3d5t2PF9Smqd'),
+  validatorStakeAccountAddress: new PublicKey(
+    new BN('69184b7f1bc836271c4ac0e29e53eb38a38ea0e7bcde693c45b30d1592a5a678', 'hex'),
+  ),
+};
 
 export const stakePoolMock = {
   accountType: 1,
@@ -105,29 +113,94 @@ export const validatorListMock = {
 };
 
 export function mockTokenAccount(amount = 0) {
-  const data = Buffer.alloc(1024);
+  const data = Buffer.alloc(165);
   AccountLayout.encode(
     {
-      state: 0,
       mint: stakePoolMock.poolMint,
       owner: new PublicKey(0),
-      amount: new BN(amount),
-      // address: new PublicKey(0),
-      // delegate: null,
-      // delegatedAmount: new BN(0),
-      // isInitialized: true,
-      // isFrozen: false,
-      // isNative: false,
-      // rentExemptReserve: null,
-      // closeAuthority: null,
+      amount: BigInt(amount),
+      delegateOption: 0,
+      delegate: new PublicKey(0),
+      delegatedAmount: BigInt(0),
+      state: 1,
+      isNativeOption: 0,
+      isNative: BigInt(0),
+      closeAuthorityOption: 0,
+      closeAuthority: new PublicKey(0),
     },
     data,
   );
 
   return <AccountInfo<any>>{
     executable: true,
-    owner: new PublicKey(0),
+    owner: TOKEN_PROGRAM_ID,
     lamports: amount,
+    data,
+  };
+}
+
+export const mockRpc = (data: any): any => {
+  const value = {
+    owner: StakeProgram.programId,
+    lamports: LAMPORTS_PER_SOL,
+    data: data,
+    executable: false,
+    rentEpoch: 0,
+  };
+  return {
+    context: {
+      slot: 11,
+    },
+    value: value,
+  };
+};
+
+export const stakeAccountData = {
+  program: 'stake',
+  parsed: {
+    type: 'delegated',
+    info: {
+      meta: {
+        rentExemptReserve: new BN(1),
+        lockup: {
+          epoch: 32,
+          unixTimestamp: 2,
+          custodian: new PublicKey(12),
+        },
+        authorized: {
+          staker: new PublicKey(12),
+          withdrawer: new PublicKey(12),
+        },
+      },
+      stake: {
+        delegation: {
+          voter: new PublicKey(
+            new BN('e4e37d6f2e80c0bb0f3da8a06304e57be5cda6efa2825b86780aa320d9784cf8', 'hex'),
+          ),
+          stake: new BN(0),
+          activationEpoch: new BN(1),
+          deactivationEpoch: new BN(1),
+          warmupCooldownRate: 1.2,
+        },
+        creditsObserved: 1,
+      },
+    },
+  },
+};
+
+export const uninitializedStakeAccount = {
+  program: 'stake',
+  parsed: {
+    type: 'uninitialized',
+  },
+};
+
+export function mockValidatorsStakeAccount() {
+  const data = Buffer.alloc(1024);
+  return <AccountInfo<any>>{
+    executable: false,
+    owner: StakeProgram.programId,
+    lamports: 3000000000,
     data,
   };
 }

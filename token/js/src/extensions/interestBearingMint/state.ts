@@ -1,14 +1,14 @@
-import { s16, ns64, struct } from '@solana/buffer-layout';
+import { ns64, s16, struct } from '@solana/buffer-layout';
 import { publicKey } from '@solana/buffer-layout-utils';
-import { PublicKey } from '@solana/web3.js';
-import { Mint } from '../../state';
-import { ExtensionType, getExtensionData } from '../extensionType';
+import type { PublicKey } from '@solana/web3.js';
+import type { Mint } from '../../state/mint.js';
+import { ExtensionType, getExtensionData } from '../extensionType.js';
 
 export interface InterestBearingMintConfigState {
     rateAuthority: PublicKey;
-    initializationTimestamp: BigInt;
+    initializationTimestamp: bigint;
     preUpdateAverageRate: number;
-    lastUpdateTimestamp: BigInt;
+    lastUpdateTimestamp: bigint;
     currentRate: number;
 }
 
@@ -23,7 +23,7 @@ export const InterestBearingMintConfigStateLayout = struct<InterestBearingMintCo
 export const INTEREST_BEARING_MINT_CONFIG_STATE_SIZE = InterestBearingMintConfigStateLayout.span;
 
 export function getInterestBearingMintConfigState(mint: Mint): InterestBearingMintConfigState | null {
-    const extensionData = getExtensionData(ExtensionType.InterestBearingMint, mint.tlvData);
+    const extensionData = getExtensionData(ExtensionType.InterestBearingConfig, mint.tlvData);
     if (extensionData !== null) {
         return InterestBearingMintConfigStateLayout.decode(extensionData);
     }

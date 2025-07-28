@@ -1,4 +1,4 @@
-#![cfg(feature = "test-bpf")]
+#![cfg(feature = "test-sbf")]
 
 mod program_test;
 use {
@@ -9,8 +9,10 @@ use {
         signer::keypair::Keypair, transaction::TransactionError, transport::TransportError,
     },
     spl_token_2022::{
-        error::TokenError, extension::default_account_state::DefaultAccountState,
-        instruction::AuthorityType, state::AccountState,
+        error::TokenError,
+        extension::{default_account_state::DefaultAccountState, BaseStateWithExtensions},
+        instruction::AuthorityType,
+        state::AccountState,
     },
     spl_token_client::token::{ExtensionInitializationParams, TokenError as TokenClientError},
     std::convert::TryFrom,
@@ -187,16 +189,21 @@ async fn end_to_end_default_account_state() {
 
     let owner = Pubkey::new_unique();
     let account = Keypair::new();
-    let account = token
+    token
         .create_auxiliary_token_account(&account, &owner)
         .await
         .unwrap();
+    let account = account.pubkey();
     let account_state = token.get_account_info(&account).await.unwrap();
     assert_eq!(account_state.base.state, default_account_state);
 
     // Invalid default state
     let err = token
-        .set_default_account_state(&mint_authority, &AccountState::Uninitialized)
+        .set_default_account_state(
+            &mint_authority.pubkey(),
+            &AccountState::Uninitialized,
+            &[&mint_authority],
+        )
         .await
         .unwrap_err();
     assert_eq!(
@@ -210,7 +217,11 @@ async fn end_to_end_default_account_state() {
     );
 
     token
-        .set_default_account_state(&freeze_authority, &AccountState::Initialized)
+        .set_default_account_state(
+            &freeze_authority.pubkey(),
+            &AccountState::Initialized,
+            &[&freeze_authority],
+        )
         .await
         .unwrap();
     let state = token.get_mint_info().await.unwrap();
@@ -222,10 +233,11 @@ async fn end_to_end_default_account_state() {
 
     let owner = Pubkey::new_unique();
     let account = Keypair::new();
-    let account = token
+    token
         .create_auxiliary_token_account(&account, &owner)
         .await
         .unwrap();
+    let account = account.pubkey();
     let account_state = token.get_account_info(&account).await.unwrap();
     assert_eq!(account_state.base.state, AccountState::Initialized);
 
@@ -234,15 +246,20 @@ async fn end_to_end_default_account_state() {
     token
         .set_authority(
             token.get_address(),
+            &freeze_authority.pubkey(),
             Some(&new_authority.pubkey()),
             AuthorityType::FreezeAccount,
-            &freeze_authority,
+            &[&freeze_authority],
         )
         .await
         .unwrap();
 
     let err = token
-        .set_default_account_state(&mint_authority, &AccountState::Frozen)
+        .set_default_account_state(
+            &mint_authority.pubkey(),
+            &AccountState::Frozen,
+            &[&mint_authority],
+        )
         .await
         .unwrap_err();
     assert_eq!(
@@ -256,7 +273,11 @@ async fn end_to_end_default_account_state() {
     );
 
     token
-        .set_default_account_state(&new_authority, &AccountState::Frozen)
+        .set_default_account_state(
+            &new_authority.pubkey(),
+            &AccountState::Frozen,
+            &[&new_authority],
+        )
         .await
         .unwrap();
     let state = token.get_mint_info().await.unwrap();
@@ -269,15 +290,20 @@ async fn end_to_end_default_account_state() {
     token
         .set_authority(
             token.get_address(),
+            &new_authority.pubkey(),
             None,
             AuthorityType::FreezeAccount,
-            &new_authority,
+            &[&new_authority],
         )
         .await
         .unwrap();
 
     let err = token
-        .set_default_account_state(&new_authority, &AccountState::Initialized)
+        .set_default_account_state(
+            &new_authority.pubkey(),
+            &AccountState::Initialized,
+            &[&new_authority],
+        )
         .await
         .unwrap_err();
     assert_eq!(

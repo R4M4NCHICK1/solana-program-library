@@ -1,4 +1,5 @@
-#![cfg(feature = "test-bpf")]
+#![allow(clippy::arithmetic_side_effects)]
+#![cfg(feature = "test-sbf")]
 
 mod helpers;
 
@@ -6,7 +7,7 @@ use {
     helpers::*,
     solana_program_test::*,
     solana_sdk::{
-        borsh::try_from_slice_unchecked,
+        borsh0_10::try_from_slice_unchecked,
         instruction::InstructionError,
         signature::{Keypair, Signer},
         transaction::{Transaction, TransactionError},
@@ -20,7 +21,7 @@ use {
 
 async fn setup(fee: Option<u8>) -> (ProgramTestContext, StakePoolAccounts, u8) {
     let mut context = program_test().start_with_context().await;
-    let mut stake_pool_accounts = StakePoolAccounts::new();
+    let mut stake_pool_accounts = StakePoolAccounts::default();
     if let Some(fee) = fee {
         stake_pool_accounts.referral_fee = fee;
     }

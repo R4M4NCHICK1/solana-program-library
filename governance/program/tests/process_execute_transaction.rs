@@ -1,18 +1,19 @@
-#![cfg(feature = "test-bpf")]
+#![cfg(feature = "test-sbf")]
 
 mod program_test;
 
-use solana_program::{
-    instruction::{AccountMeta, Instruction},
-    program_error::ProgramError,
-    sysvar::clock,
-};
-use solana_program_test::tokio;
-
-use program_test::*;
-use spl_governance::{
-    error::GovernanceError,
-    state::enums::{ProposalState, TransactionExecutionStatus},
+use {
+    program_test::*,
+    solana_program::{
+        instruction::{AccountMeta, Instruction},
+        program_error::ProgramError,
+        sysvar::clock,
+    },
+    solana_program_test::tokio,
+    spl_governance::{
+        error::GovernanceError,
+        state::enums::{ProposalState, TransactionExecutionStatus},
+    },
 };
 
 #[tokio::test]
@@ -43,7 +44,11 @@ async fn test_execute_mint_transaction() {
         .unwrap();
 
     let signatory_record_cookie = governance_test
-        .with_signatory(&proposal_cookie, &token_owner_record_cookie)
+        .with_signatory(
+            &proposal_cookie,
+            &mint_governance_cookie,
+            &token_owner_record_cookie,
+        )
         .await
         .unwrap();
 
@@ -144,7 +149,11 @@ async fn test_execute_transfer_transaction() {
         .unwrap();
 
     let signatory_record_cookie = governance_test
-        .with_signatory(&proposal_cookie, &token_owner_record_cookie)
+        .with_signatory(
+            &proposal_cookie,
+            &token_governance_cookie,
+            &token_owner_record_cookie,
+        )
         .await
         .unwrap();
 
@@ -215,7 +224,11 @@ async fn test_execute_transfer_transaction() {
     assert_eq!(15, instruction_token_account.amount);
 }
 
+// Ignored until program-test manages fork graphs correctly, see
+// https://github.com/solana-labs/solana/pull/34407 for the failing downstream
+// test
 #[tokio::test]
+#[ignore]
 async fn test_execute_upgrade_program_transaction() {
     // Arrange
     let mut governance_test = GovernanceProgramTest::start_new().await;
@@ -243,7 +256,11 @@ async fn test_execute_upgrade_program_transaction() {
         .unwrap();
 
     let signatory_record_cookie = governance_test
-        .with_signatory(&proposal_cookie, &token_owner_record_cookie)
+        .with_signatory(
+            &proposal_cookie,
+            &program_governance_cookie,
+            &token_owner_record_cookie,
+        )
         .await
         .unwrap();
 
@@ -369,12 +386,20 @@ async fn test_execute_proposal_transaction_with_invalid_state_errors() {
         .unwrap();
 
     let signatory_record_cookie1 = governance_test
-        .with_signatory(&proposal_cookie, &token_owner_record_cookie)
+        .with_signatory(
+            &proposal_cookie,
+            &mint_governance_cookie,
+            &token_owner_record_cookie,
+        )
         .await
         .unwrap();
 
     let signatory_record_cookie2 = governance_test
-        .with_signatory(&proposal_cookie, &token_owner_record_cookie)
+        .with_signatory(
+            &proposal_cookie,
+            &mint_governance_cookie,
+            &token_owner_record_cookie,
+        )
         .await
         .unwrap();
 
@@ -534,7 +559,11 @@ async fn test_execute_proposal_transaction_for_other_proposal_error() {
         .unwrap();
 
     let signatory_record_cookie = governance_test
-        .with_signatory(&proposal_cookie, &token_owner_record_cookie)
+        .with_signatory(
+            &proposal_cookie,
+            &mint_governance_cookie,
+            &token_owner_record_cookie,
+        )
         .await
         .unwrap();
 
@@ -620,7 +649,11 @@ async fn test_execute_mint_transaction_twice_error() {
         .unwrap();
 
     let signatory_record_cookie = governance_test
-        .with_signatory(&proposal_cookie, &token_owner_record_cookie)
+        .with_signatory(
+            &proposal_cookie,
+            &mint_governance_cookie,
+            &token_owner_record_cookie,
+        )
         .await
         .unwrap();
 
@@ -708,7 +741,11 @@ async fn test_execute_transaction_with_create_proposal_and_execute_in_single_slo
         .unwrap();
 
     let signatory_record_cookie = governance_test
-        .with_signatory(&proposal_cookie, &token_owner_record_cookie)
+        .with_signatory(
+            &proposal_cookie,
+            &mint_governance_cookie,
+            &token_owner_record_cookie,
+        )
         .await
         .unwrap();
 

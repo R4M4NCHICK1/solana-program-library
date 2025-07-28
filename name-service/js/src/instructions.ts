@@ -13,7 +13,7 @@ export function createInstruction(
   space: Numberu32,
   nameClassKey?: PublicKey,
   nameParent?: PublicKey,
-  nameParentOwner?: PublicKey
+  nameParentOwner?: PublicKey,
 ): TransactionInstruction {
   const buffers = [
     Buffer.from(Int8Array.from([0])),
@@ -95,7 +95,7 @@ export function updateInstruction(
   offset: Numberu32,
   input_data: Buffer,
   nameUpdateSigner: PublicKey,
-  parentNameKey: PublicKey | undefined
+  parentNameKey: PublicKey | undefined,
 ): TransactionInstruction {
   const buffers = [
     Buffer.from(Int8Array.from([1])),
@@ -139,7 +139,7 @@ export function transferInstruction(
   newOwnerKey: PublicKey,
   currentNameOwnerKey: PublicKey,
   nameClassKey?: PublicKey,
-  nameParent?: PublicKey
+  nameParent?: PublicKey,
 ): TransactionInstruction {
   const buffers = [Buffer.from(Int8Array.from([2])), newOwnerKey.toBuffer()];
 
@@ -185,7 +185,7 @@ export function deleteInstruction(
   nameProgramId: PublicKey,
   nameAccountKey: PublicKey,
   refundTargetKey: PublicKey,
-  nameOwnerKey: PublicKey
+  nameOwnerKey: PublicKey,
 ): TransactionInstruction {
   const buffers = [Buffer.from(Int8Array.from([3]))];
 
@@ -205,6 +205,47 @@ export function deleteInstruction(
       pubkey: refundTargetKey,
       isSigner: false,
       isWritable: true,
+    },
+  ];
+
+  return new TransactionInstruction({
+    keys,
+    programId: nameProgramId,
+    data,
+  });
+}
+
+export function reallocInstruction(
+  nameProgramId: PublicKey,
+  systemProgramId: PublicKey,
+  payerKey: PublicKey,
+  nameAccountKey: PublicKey,
+  nameOwnerKey: PublicKey,
+  space: Numberu32,
+): TransactionInstruction {
+  const buffers = [Buffer.from(Int8Array.from([4])), space.toBuffer()];
+
+  const data = Buffer.concat(buffers);
+  const keys = [
+    {
+      pubkey: systemProgramId,
+      isSigner: false,
+      isWritable: false,
+    },
+    {
+      pubkey: payerKey,
+      isSigner: true,
+      isWritable: true,
+    },
+    {
+      pubkey: nameAccountKey,
+      isSigner: false,
+      isWritable: true,
+    },
+    {
+      pubkey: nameOwnerKey,
+      isSigner: true,
+      isWritable: false,
     },
   ];
 

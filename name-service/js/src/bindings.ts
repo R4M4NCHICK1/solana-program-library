@@ -8,6 +8,7 @@ import {
 import {
   createInstruction,
   deleteInstruction,
+  reallocInstruction,
   transferInstruction,
   updateInstruction,
 } from './instructions';
@@ -23,7 +24,7 @@ import {
 ////////////////////////////////////////////////////////////
 
 export const NAME_PROGRAM_ID = new PublicKey(
-  'namesLPneVptA9Z5rqUDD9tMTWEJwofgaYwp8cawRkX'
+  'namesLPneVptA9Z5rqUDD9tMTWEJwofgaYwp8cawRkX',
 );
 export const HASH_PREFIX = 'SPL Name Service';
 
@@ -49,13 +50,13 @@ export async function createNameRegistry(
   nameOwner: PublicKey,
   lamports?: number,
   nameClass?: PublicKey,
-  parentName?: PublicKey
+  parentName?: PublicKey,
 ): Promise<TransactionInstruction> {
   const hashed_name = await getHashedName(name);
   const nameAccountKey = await getNameAccountKey(
     hashed_name,
     nameClass,
-    parentName
+    parentName,
   );
 
   const balance = lamports
@@ -79,7 +80,7 @@ export async function createNameRegistry(
     new Numberu32(space),
     nameClass,
     parentName,
-    nameParentOwner
+    nameParentOwner,
   );
 
   return createNameInstr;
@@ -101,13 +102,13 @@ export async function updateNameRegistryData(
   offset: number,
   input_data: Buffer,
   nameClass?: PublicKey,
-  nameParent?: PublicKey
+  nameParent?: PublicKey,
 ): Promise<TransactionInstruction> {
   const hashed_name = await getHashedName(name);
   const nameAccountKey = await getNameAccountKey(
     hashed_name,
     nameClass,
-    nameParent
+    nameParent,
   );
 
   let signer: PublicKey;
@@ -124,7 +125,7 @@ export async function updateNameRegistryData(
     new Numberu32(offset),
     input_data,
     signer,
-    nameParent
+    nameParent,
   );
 
   return updateInstr;
@@ -146,13 +147,13 @@ export async function transferNameOwnership(
   name: string,
   newOwner: PublicKey,
   nameClass?: PublicKey,
-  nameParent?: PublicKey
+  nameParent?: PublicKey,
 ): Promise<TransactionInstruction> {
   const hashed_name = await getHashedName(name);
   const nameAccountKey = await getNameAccountKey(
     hashed_name,
     nameClass,
-    nameParent
+    nameParent,
   );
 
   let curentNameOwner: PublicKey;
@@ -170,7 +171,7 @@ export async function transferNameOwnership(
     newOwner,
     curentNameOwner,
     nameClass,
-    nameParent
+    nameParent,
   );
 
   return transferInstr;
@@ -191,13 +192,13 @@ export async function deleteNameRegistry(
   name: string,
   refundTargetKey: PublicKey,
   nameClass?: PublicKey,
-  nameParent?: PublicKey
+  nameParent?: PublicKey,
 ): Promise<TransactionInstruction> {
   const hashed_name = await getHashedName(name);
   const nameAccountKey = await getNameAccountKey(
     hashed_name,
     nameClass,
-    nameParent
+    nameParent,
   );
 
   let nameOwner: PublicKey;
@@ -212,8 +213,54 @@ export async function deleteNameRegistry(
     NAME_PROGRAM_ID,
     nameAccountKey,
     refundTargetKey,
-    nameOwner
+    nameOwner,
   );
 
   return changeAuthoritiesInstr;
+}
+
+/**
+ * Realloc the name account space.
+ *
+ * @param connection The solana connection object to the RPC node
+ * @param name The name of the name account
+ * @param space The new space to be allocated
+ * @param payerKey The allocation cost payer if new space is larger than current or the refund destination if smaller
+ * @param nameClass The class of this name, if it exsists
+ * @param nameParent The parent name of this name, if it exists
+ * @returns
+ */
+export async function reallocNameAccount(
+  connection: Connection,
+  name: string,
+  space: number,
+  payerKey: PublicKey,
+  nameClass?: PublicKey,
+  nameParent?: PublicKey,
+): Promise<TransactionInstruction> {
+  const hashedName = await getHashedName(name);
+  const nameAccountKey = await getNameAccountKey(
+    hashedName,
+    nameClass,
+    nameParent,
+  );
+
+  let nameOwner: PublicKey;
+  if (nameClass) {
+    nameOwner = nameClass;
+  } else {
+    nameOwner = (await NameRegistryState.retrieve(connection, nameAccountKey))
+      .owner;
+  }
+
+  const reallocInstr = reallocInstruction(
+    NAME_PROGRAM_ID,
+    SystemProgram.programId,
+    payerKey,
+    nameAccountKey,
+    nameOwner,
+    new Numberu32(space),
+  );
+
+  return reallocInstr;
 }

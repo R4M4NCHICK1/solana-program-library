@@ -173,6 +173,7 @@ impl CurveCalculator for ConstantPriceCurve {
         swap_token_b_amount: u128,
         pool_supply: u128,
         trade_direction: TradeDirection,
+        round_direction: RoundDirection,
     ) -> Option<u128> {
         trading_tokens_to_pool_tokens(
             self.token_b_price,
@@ -181,7 +182,7 @@ impl CurveCalculator for ConstantPriceCurve {
             swap_token_b_amount,
             pool_supply,
             trade_direction,
-            RoundDirection::Ceiling,
+            round_direction,
         )
     }
 
@@ -261,16 +262,18 @@ impl DynPack for ConstantPriceCurve {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::curve::calculator::{
-        test::{
-            check_curve_value_from_swap, check_deposit_token_conversion,
-            check_withdraw_token_conversion, total_and_intermediate,
-            CONVERSION_BASIS_POINTS_GUARANTEE,
+    use {
+        super::*,
+        crate::curve::calculator::{
+            test::{
+                check_curve_value_from_swap, check_deposit_token_conversion,
+                check_withdraw_token_conversion, total_and_intermediate,
+                CONVERSION_BASIS_POINTS_GUARANTEE,
+            },
+            INITIAL_SWAP_POOL_AMOUNT,
         },
-        INITIAL_SWAP_POOL_AMOUNT,
+        proptest::prelude::*,
     };
-    use proptest::prelude::*;
 
     #[test]
     fn swap_calculation_no_price() {
@@ -454,7 +457,7 @@ mod tests {
     proptest! {
         #[test]
         fn withdraw_token_conversion(
-            (pool_token_supply, pool_token_amount) in total_and_intermediate(),
+            (pool_token_supply, pool_token_amount) in total_and_intermediate(u64::MAX),
             swap_token_a_amount in 1..u64::MAX,
             swap_token_b_amount in 1..u32::MAX, // kept small to avoid proptest rejections
             token_b_price in 1..u32::MAX, // kept small to avoid proptest rejections
@@ -568,7 +571,6 @@ mod tests {
         ) {
             let curve = ConstantPriceCurve { token_b_price: token_b_price as u64 };
             let pool_token_amount = pool_token_amount as u128;
-            let pool_token_supply = pool_token_supply as u128;
             let swap_token_a_amount = swap_token_a_amount as u128;
             let swap_token_b_amount = swap_token_b_amount as u128;
             let token_b_price = token_b_price as u128;
@@ -609,7 +611,7 @@ mod tests {
     proptest! {
         #[test]
         fn curve_value_does_not_decrease_from_withdraw(
-            (pool_token_supply, pool_token_amount) in total_and_intermediate(),
+            (pool_token_supply, pool_token_amount) in total_and_intermediate(u64::MAX),
             swap_token_a_amount in 1..u64::MAX,
             swap_token_b_amount in 1..u32::MAX, // kept small to avoid proptest rejections
             token_b_price in 1..u32::MAX, // kept small to avoid proptest rejections

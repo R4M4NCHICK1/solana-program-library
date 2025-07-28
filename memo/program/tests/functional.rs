@@ -1,15 +1,17 @@
-#![cfg(feature = "test-bpf")]
+#![cfg(feature = "test-sbf")]
 
-use solana_program::{
-    instruction::{AccountMeta, Instruction, InstructionError},
-    pubkey::Pubkey,
+use {
+    solana_program::{
+        instruction::{AccountMeta, Instruction, InstructionError},
+        pubkey::Pubkey,
+    },
+    solana_program_test::*,
+    solana_sdk::{
+        signature::{Keypair, Signer},
+        transaction::{Transaction, TransactionError},
+    },
+    spl_memo::*,
 };
-use solana_program_test::*;
-use solana_sdk::{
-    signature::{Keypair, Signer},
-    transaction::{Transaction, TransactionError},
-};
-use spl_memo::*;
 
 fn program_test() -> ProgramTest {
     ProgramTest::new("spl_memo", id(), processor!(processor::process_instruction))
@@ -40,7 +42,8 @@ async fn test_memo_signing() {
     transaction.sign(&[&payer], recent_blockhash);
     banks_client.process_transaction(transaction).await.unwrap();
 
-    // Demonstrate success on signature provided, regardless of specific memo AccountMeta
+    // Demonstrate success on signature provided, regardless of specific memo
+    // AccountMeta
     let mut transaction = Transaction::new_with_payer(
         &[Instruction {
             program_id: id(),

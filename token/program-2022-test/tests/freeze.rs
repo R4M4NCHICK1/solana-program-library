@@ -1,4 +1,4 @@
-#![cfg(feature = "test-bpf")]
+#![cfg(feature = "test-sbf")]
 
 mod program_test;
 use {
@@ -21,22 +21,23 @@ async fn basic() {
     let freeze_authority = freeze_authority.unwrap();
 
     let account = Keypair::new();
-    let account = token
+    token
         .create_auxiliary_token_account(&account, &alice.pubkey())
         .await
         .unwrap();
+    let account = account.pubkey();
     let state = token.get_account_info(&account).await.unwrap();
     assert_eq!(state.base.state, AccountState::Initialized);
 
     token
-        .freeze_account(&account, &freeze_authority)
+        .freeze(&account, &freeze_authority.pubkey(), &[&freeze_authority])
         .await
         .unwrap();
     let state = token.get_account_info(&account).await.unwrap();
     assert_eq!(state.base.state, AccountState::Frozen);
 
     token
-        .thaw_account(&account, &freeze_authority)
+        .thaw(&account, &freeze_authority.pubkey(), &[&freeze_authority])
         .await
         .unwrap();
     let state = token.get_account_info(&account).await.unwrap();

@@ -1,34 +1,34 @@
 //! Proposal Vote Record Account
 
-use borsh::maybestd::io::Write;
-
-use borsh::{BorshDeserialize, BorshSchema, BorshSerialize};
-use solana_program::account_info::AccountInfo;
-use solana_program::borsh::try_from_slice_unchecked;
-
-use solana_program::program_error::ProgramError;
-use solana_program::{program_pack::IsInitialized, pubkey::Pubkey};
-use spl_governance_tools::account::{get_account_data, AccountMaxSize};
-
-use crate::error::GovernanceError;
-
-use crate::PROGRAM_AUTHORITY_SEED;
-
-use crate::state::{
-    enums::GovernanceAccountType,
-    legacy::{VoteRecordV1, VoteWeightV1},
-    proposal::ProposalV2,
-    realm::RealmV2,
-    token_owner_record::TokenOwnerRecordV2,
+use {
+    crate::{
+        error::GovernanceError,
+        state::{
+            enums::GovernanceAccountType,
+            legacy::{VoteRecordV1, VoteWeightV1},
+            proposal::ProposalV2,
+            realm::RealmV2,
+            token_owner_record::TokenOwnerRecordV2,
+        },
+        PROGRAM_AUTHORITY_SEED,
+    },
+    borsh::{maybestd::io::Write, BorshDeserialize, BorshSchema, BorshSerialize},
+    solana_program::{
+        account_info::AccountInfo, program_error::ProgramError, program_pack::IsInitialized,
+        pubkey::Pubkey,
+    },
+    spl_governance_tools::account::{get_account_data, get_account_type, AccountMaxSize},
 };
 
 /// Voter choice for a proposal option
-/// In the current version only 1) Single choice and 2) Multiple choices proposals are supported
-/// In the future versions we can add support for 1) Quadratic voting, 2) Ranked choice voting and 3) Weighted voting
-#[derive(Clone, Debug, PartialEq, BorshDeserialize, BorshSerialize, BorshSchema)]
+/// In the current version only 1) Single choice, 2) Multiple choices proposals
+/// and 3) Weighted voting are supported.
+/// In the future versions we can add support for 1) Quadratic voting and
+/// 2) Ranked choice voting
+#[derive(Clone, Debug, PartialEq, Eq, BorshDeserialize, BorshSerialize, BorshSchema)]
 pub struct VoteChoice {
     /// The rank given to the choice by voter
-    /// Note: The filed is not used in the current version
+    /// Note: The field is not used in the current version
     pub rank: u8,
 
     /// The voter's weight percentage given by the voter to the choice
@@ -39,15 +39,22 @@ impl VoteChoice {
     /// Returns the choice weight given the voter's weight
     pub fn get_choice_weight(&self, voter_weight: u64) -> Result<u64, ProgramError> {
         Ok(match self.weight_percentage {
+            // Avoid any rounding errors for full weight
             100 => voter_weight,
-            0 => 0,
+            // Note: The total weight for all choices might not equal voter_weight due to rounding
+            // errors
+            0..=99 => (voter_weight as u128)
+                .checked_mul(self.weight_percentage as u128)
+                .unwrap()
+                .checked_div(100)
+                .unwrap() as u64,
             _ => return Err(GovernanceError::InvalidVoteChoiceWeightPercentage.into()),
         })
     }
 }
 
 /// User's vote
-#[derive(Clone, Debug, PartialEq, BorshDeserialize, BorshSerialize, BorshSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, BorshDeserialize, BorshSerialize, BorshSchema)]
 pub enum Vote {
     /// Vote approving choices
     Approve(Vec<VoteChoice>),
@@ -64,13 +71,15 @@ pub enum Vote {
 }
 
 /// VoteKind defines the type of the vote being cast
-#[derive(Clone, Debug, PartialEq, BorshDeserialize, BorshSerialize, BorshSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, BorshDeserialize, BorshSerialize, BorshSchema)]
 pub enum VoteKind {
-    /// Electorate vote is cast by the voting population identified by governing_token_mint
-    /// Approve, Deny and Abstain votes are Electorate votes
+    /// Electorate vote is cast by the voting population identified by
+    /// governing_token_mint Approve, Deny and Abstain votes are Electorate
+    /// votes
     Electorate,
 
-    /// Vote cast by the opposite voting population to the Electorate identified by governing_token_mint
+    /// Vote cast by the opposite voting population to the Electorate identified
+    /// by governing_token_mint
     Veto,
 }
 
@@ -83,7 +92,7 @@ pub fn get_vote_kind(vote: &Vote) -> VoteKind {
 }
 
 /// Proposal VoteRecord
-#[derive(Clone, Debug, PartialEq, BorshDeserialize, BorshSerialize, BorshSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, BorshDeserialize, BorshSerialize, BorshSchema)]
 pub struct VoteRecordV2 {
     /// Governance account type
     pub account_type: GovernanceAccountType,
@@ -92,7 +101,8 @@ pub struct VoteRecordV2 {
     pub proposal: Pubkey,
 
     /// The user who casted this vote
-    /// This is the Governing Token Owner who deposited governing tokens into the Realm
+    /// This is the Governing Token Owner who deposited governing tokens into
+    /// the Realm
     pub governing_token_owner: Pubkey,
 
     /// Indicates whether the vote was relinquished by voter
@@ -105,7 +115,7 @@ pub struct VoteRecordV2 {
     pub vote: Vote,
 
     /// Reserved space for versions v2 and onwards
-    /// Note: This space won't be available to v1 accounts until runtime supports resizing
+    /// Note: V1 accounts must be resized before using this space
     pub reserved_v2: [u8; 8],
 }
 
@@ -127,13 +137,15 @@ impl VoteRecordV2 {
     }
 
     /// Serializes account into the target buffer
-    pub fn serialize<W: Write>(self, writer: &mut W) -> Result<(), ProgramError> {
+    pub fn serialize<W: Write>(self, writer: W) -> Result<(), ProgramError> {
         if self.account_type == GovernanceAccountType::VoteRecordV2 {
-            BorshSerialize::serialize(&self, writer)?
+            borsh::to_writer(writer, &self)?
         } else if self.account_type == GovernanceAccountType::VoteRecordV1 {
-            // V1 account can't be resized and we have to translate it back to the original format
+            // V1 account can't be resized and we have to translate it back to the original
+            // format
 
-            // If reserved_v2 is used it must be individually asses for v1 backward compatibility impact
+            // If reserved_v2 is used it must be individually asses for v1 backward
+            // compatibility impact
             if self.reserved_v2 != [0; 8] {
                 panic!("Extended data not supported by VoteRecordV1")
             }
@@ -154,7 +166,7 @@ impl VoteRecordV2 {
                 vote_weight,
             };
 
-            BorshSerialize::serialize(&vote_record_data_v1, writer)?;
+            borsh::to_writer(writer, &vote_record_data_v1)?
         }
 
         Ok(())
@@ -166,8 +178,7 @@ pub fn get_vote_record_data(
     program_id: &Pubkey,
     vote_record_info: &AccountInfo,
 ) -> Result<VoteRecordV2, ProgramError> {
-    let account_type: GovernanceAccountType =
-        try_from_slice_unchecked(&vote_record_info.data.borrow())?;
+    let account_type: GovernanceAccountType = get_account_type(program_id, vote_record_info)?;
 
     // If the account is V1 version then translate to V2
     if account_type == GovernanceAccountType::VoteRecordV1 {
@@ -198,7 +209,8 @@ pub fn get_vote_record_data(
     get_account_data::<VoteRecordV2>(program_id, vote_record_info)
 }
 
-/// Deserializes VoteRecord and checks it belongs to the provided Proposal and TokenOwnerRecord
+/// Deserializes VoteRecord and checks it belongs to the provided Proposal and
+/// TokenOwnerRecord
 pub fn get_vote_record_data_for_proposal_and_token_owner_record(
     program_id: &Pubkey,
     vote_record_info: &AccountInfo,
@@ -217,9 +229,11 @@ pub fn get_vote_record_data_for_proposal_and_token_owner_record(
         return Err(GovernanceError::InvalidGoverningTokenOwnerForVoteRecord.into());
     }
 
-    // Assert governing_token_mint between Proposal and TokenOwnerRecord match for the deserialized VoteRecord
-    // For Approve, Deny and Abstain votes Proposal.governing_token_mint must equal TokenOwnerRecord.governing_token_mint
-    // For Veto vote it must be the governing_token_mint of the opposite voting population
+    // Assert governing_token_mint between Proposal and TokenOwnerRecord match for
+    // the deserialized VoteRecord For Approve, Deny and Abstain votes
+    // Proposal.governing_token_mint must equal
+    // TokenOwnerRecord.governing_token_mint For Veto vote it must be the
+    // governing_token_mint of the opposite voting population
     let proposal_governing_token_mint = realm_data.get_proposal_governing_token_mint_for_vote(
         &token_owner_record_data.governing_token_mint,
         &get_vote_kind(&vote_record_data.vote),
@@ -260,10 +274,7 @@ pub fn get_vote_record_address<'a>(
 #[cfg(test)]
 mod test {
 
-    use borsh::BorshSerialize;
-    use solana_program::clock::Epoch;
-
-    use super::*;
+    use {super::*, solana_program::clock::Epoch};
 
     #[test]
     fn test_vote_record_v1_to_v2_serialisation_roundtrip() {
@@ -278,7 +289,7 @@ mod test {
         };
 
         let mut account_data = vec![];
-        vote_record_v1_source.serialize(&mut account_data).unwrap();
+        borsh::to_writer(&mut account_data, &vote_record_v1_source).unwrap();
 
         let program_id = Pubkey::new_unique();
 
@@ -299,9 +310,8 @@ mod test {
         // Act
 
         let vote_record_v2 = get_vote_record_data(&program_id, &account_info).unwrap();
-
         vote_record_v2
-            .serialize(&mut &mut **account_info.data.borrow_mut())
+            .serialize(&mut account_info.data.borrow_mut()[..])
             .unwrap();
 
         // Assert
@@ -310,5 +320,86 @@ mod test {
             get_account_data::<VoteRecordV1>(&program_id, &account_info).unwrap();
 
         assert_eq!(vote_record_v1_source, vote_record_v1_target)
+    }
+
+    #[test]
+    fn test_get_choice_weight_with_invalid_weight_percentage_error() {
+        // Arrange
+        let vote_choice = VoteChoice {
+            rank: 0,
+            weight_percentage: 127,
+        };
+
+        // Act
+        let result = vote_choice.get_choice_weight(100);
+
+        // Assert
+        assert_eq!(
+            Err(GovernanceError::InvalidVoteChoiceWeightPercentage.into()),
+            result
+        );
+    }
+
+    #[test]
+    fn test_get_choice_weight() {
+        // Arrange
+        let vote_choice = VoteChoice {
+            rank: 0,
+            weight_percentage: 100,
+        };
+
+        // Act
+        let result = vote_choice.get_choice_weight(100);
+
+        // Assert
+        assert_eq!(Ok(100_u64), result);
+
+        // Arrange
+        let vote_choice = VoteChoice {
+            rank: 0,
+            weight_percentage: 0,
+        };
+
+        // Act
+        let result = vote_choice.get_choice_weight(100);
+
+        // Assert
+        assert_eq!(Ok(0_u64), result);
+
+        // Arrange
+        let vote_choice = VoteChoice {
+            rank: 0,
+            weight_percentage: 33,
+        };
+
+        // Act
+        let result = vote_choice.get_choice_weight(100);
+
+        // Assert
+        assert_eq!(Ok(33_u64), result);
+
+        // Arrange
+        let vote_choice = VoteChoice {
+            rank: 0,
+            weight_percentage: 34,
+        };
+
+        // Act
+        let result = vote_choice.get_choice_weight(100);
+
+        // Assert
+        assert_eq!(Ok(34_u64), result);
+
+        // Arrange
+        let vote_choice = VoteChoice {
+            rank: 0,
+            weight_percentage: 50,
+        };
+
+        // Act
+        let result = vote_choice.get_choice_weight(u64::MAX);
+
+        // Assert
+        assert_eq!(Ok(u64::MAX / 2), result);
     }
 }

@@ -1,5 +1,6 @@
-// Mark this test as BPF-only due to current `ProgramTest` limitations when CPIing into the system program
-#![cfg(feature = "test-bpf")]
+// Mark this test as BPF-only due to current `ProgramTest` limitations when
+// CPIing into the system program
+#![cfg(feature = "test-sbf")]
 
 use {
     solana_program::{
@@ -16,7 +17,7 @@ use {
 
 #[tokio::test]
 async fn test_cross_program_invocation() {
-    let program_id = Pubkey::from_str(&"invoker111111111111111111111111111111111111").unwrap();
+    let program_id = Pubkey::from_str("invoker111111111111111111111111111111111111").unwrap();
     let (allocated_pubkey, bump_seed) =
         Pubkey::find_program_address(&[b"You pass butter"], &program_id);
     let mut program_test = ProgramTest::new(

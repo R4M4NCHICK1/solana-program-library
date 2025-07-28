@@ -1,22 +1,23 @@
 import { struct, u8 } from '@solana/buffer-layout';
 import { publicKey } from '@solana/buffer-layout-utils';
-import { AccountMeta, PublicKey, SYSVAR_RENT_PUBKEY, TransactionInstruction } from '@solana/web3.js';
-import { TOKEN_PROGRAM_ID } from '../constants';
+import type { AccountMeta, PublicKey } from '@solana/web3.js';
+import { SYSVAR_RENT_PUBKEY, TransactionInstruction } from '@solana/web3.js';
+import { TOKEN_PROGRAM_ID } from '../constants.js';
 import {
     TokenInvalidInstructionDataError,
     TokenInvalidInstructionKeysError,
     TokenInvalidInstructionProgramError,
     TokenInvalidInstructionTypeError,
-} from '../errors';
-import { TokenInstruction } from './types';
+} from '../errors.js';
+import { TokenInstruction } from './types.js';
+import { COptionPublicKeyLayout } from '../serialization.js';
 
 /** TODO: docs */
 export interface InitializeMintInstructionData {
     instruction: TokenInstruction.InitializeMint;
     decimals: number;
     mintAuthority: PublicKey;
-    freezeAuthorityOption: 1 | 0;
-    freezeAuthority: PublicKey;
+    freezeAuthority: PublicKey | null;
 }
 
 /** TODO: docs */
@@ -24,8 +25,7 @@ export const initializeMintInstructionData = struct<InitializeMintInstructionDat
     u8('instruction'),
     u8('decimals'),
     publicKey('mintAuthority'),
-    u8('freezeAuthorityOption'),
-    publicKey('freezeAuthority'),
+    new COptionPublicKeyLayout('freezeAuthority'),
 ]);
 
 /**
@@ -57,8 +57,7 @@ export function createInitializeMintInstruction(
             instruction: TokenInstruction.InitializeMint,
             decimals,
             mintAuthority,
-            freezeAuthorityOption: freezeAuthority ? 1 : 0,
-            freezeAuthority: freezeAuthority || new PublicKey(0),
+            freezeAuthority,
         },
         data
     );
@@ -142,8 +141,7 @@ export function decodeInitializeMintInstructionUnchecked({
     keys: [mint, rent],
     data,
 }: TransactionInstruction): DecodedInitializeMintInstructionUnchecked {
-    const { instruction, decimals, mintAuthority, freezeAuthorityOption, freezeAuthority } =
-        initializeMintInstructionData.decode(data);
+    const { instruction, decimals, mintAuthority, freezeAuthority } = initializeMintInstructionData.decode(data);
 
     return {
         programId,
@@ -155,7 +153,7 @@ export function decodeInitializeMintInstructionUnchecked({
             instruction,
             decimals,
             mintAuthority,
-            freezeAuthority: freezeAuthorityOption ? freezeAuthority : null,
+            freezeAuthority,
         },
     };
 }

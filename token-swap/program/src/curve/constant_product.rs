@@ -48,8 +48,8 @@ pub fn swap(
 /// Get the amount of trading tokens for the given amount of pool tokens,
 /// provided the total trading tokens and supply of pool tokens.
 ///
-/// The constant product implementation is a simple ratio calculation for how many
-/// trading tokens correspond to a certain number of pool tokens
+/// The constant product implementation is a simple ratio calculation for how
+/// many trading tokens correspond to a certain number of pool tokens
 pub fn pool_tokens_to_trading_tokens(
     pool_tokens: u128,
     pool_token_supply: u128,
@@ -144,7 +144,9 @@ pub fn withdraw_single_token_type_exact_out(
     let source_amount = PreciseNumber::new(source_amount)?;
     let ratio = source_amount.checked_div(&swap_source_amount)?;
     let one = PreciseNumber::new(1)?;
-    let base = one.checked_sub(&ratio)?;
+    let base = one
+        .checked_sub(&ratio)
+        .unwrap_or_else(|| PreciseNumber::new(0).unwrap());
     let root = one.checked_sub(&base.sqrt()?)?;
     let pool_supply = PreciseNumber::new(pool_supply)?;
     let pool_tokens = pool_supply.checked_mul(&root)?;
@@ -157,8 +159,8 @@ pub fn withdraw_single_token_type_exact_out(
 /// Calculates the total normalized value of the curve given the liquidity
 /// parameters.
 ///
-/// The constant product implementation for this function gives the square root of
-/// the Uniswap invariant.
+/// The constant product implementation for this function gives the square root
+/// of the Uniswap invariant.
 pub fn normalized_value(
     swap_token_a_amount: u128,
     swap_token_b_amount: u128,
@@ -182,8 +184,9 @@ impl CurveCalculator for ConstantProductCurve {
         swap(source_amount, swap_source_amount, swap_destination_amount)
     }
 
-    /// The constant product implementation is a simple ratio calculation for how many
-    /// trading tokens correspond to a certain number of pool tokens
+    /// The constant product implementation is a simple ratio calculation for
+    /// how many trading tokens correspond to a certain number of pool
+    /// tokens
     fn pool_tokens_to_trading_tokens(
         &self,
         pool_tokens: u128,
@@ -227,6 +230,7 @@ impl CurveCalculator for ConstantProductCurve {
         swap_token_b_amount: u128,
         pool_supply: u128,
         trade_direction: TradeDirection,
+        round_direction: RoundDirection,
     ) -> Option<u128> {
         withdraw_single_token_type_exact_out(
             source_amount,
@@ -234,7 +238,7 @@ impl CurveCalculator for ConstantProductCurve {
             swap_token_b_amount,
             pool_supply,
             trade_direction,
-            RoundDirection::Ceiling,
+            round_direction,
         )
     }
 
@@ -275,17 +279,19 @@ impl DynPack for ConstantProductCurve {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::curve::calculator::{
-        test::{
-            check_curve_value_from_swap, check_deposit_token_conversion,
-            check_pool_value_from_deposit, check_pool_value_from_withdraw,
-            check_withdraw_token_conversion, total_and_intermediate,
-            CONVERSION_BASIS_POINTS_GUARANTEE,
+    use {
+        super::*,
+        crate::curve::calculator::{
+            test::{
+                check_curve_value_from_swap, check_deposit_token_conversion,
+                check_pool_value_from_deposit, check_pool_value_from_withdraw,
+                check_withdraw_token_conversion, total_and_intermediate,
+                CONVERSION_BASIS_POINTS_GUARANTEE,
+            },
+            RoundDirection, INITIAL_SWAP_POOL_AMOUNT,
         },
-        RoundDirection, INITIAL_SWAP_POOL_AMOUNT,
+        proptest::prelude::*,
     };
-    use proptest::prelude::*;
 
     #[test]
     fn initial_pool_amount() {
@@ -376,7 +382,7 @@ mod tests {
 
     #[test]
     fn constant_product_swap_rounding() {
-        let curve = ConstantProductCurve::default();
+        let curve = ConstantProductCurve;
 
         // much too small
         assert!(curve
@@ -384,16 +390,26 @@ mod tests {
             .is_none()); // spot: 10 * 4m / 70b = 0
 
         let tests: &[(u128, u128, u128, u128, u128)] = &[
-            (10, 4_000_000, 70_000_000_000, 10, 174_999), // spot: 10 * 70b / ~4m = 174,999.99
-            (20, 30_000 - 20, 10_000, 18, 6), // spot: 20 * 1 / 3.000 = 6.6667 (source can be 18 to get 6 dest.)
-            (19, 30_000 - 20, 10_000, 18, 6), // spot: 19 * 1 / 2.999 = 6.3334 (source can be 18 to get 6 dest.)
-            (18, 30_000 - 20, 10_000, 18, 6), // spot: 18 * 1 / 2.999 = 6.0001
-            (10, 20_000, 30_000, 10, 14),     // spot: 10 * 3 / 2.0010 = 14.99
-            (10, 20_000 - 9, 30_000, 10, 14), // spot: 10 * 3 / 2.0001 = 14.999
-            (10, 20_000 - 10, 30_000, 10, 15), // spot: 10 * 3 / 2.0000 = 15
-            (100, 60_000, 30_000, 99, 49), // spot: 100 * 3 / 6.001 = 49.99 (source can be 99 to get 49 dest.)
-            (99, 60_000, 30_000, 99, 49),  // spot: 99 * 3 / 6.001 = 49.49
-            (98, 60_000, 30_000, 97, 48), // spot: 98 * 3 / 6.001 = 48.99 (source can be 97 to get 48 dest.)
+            // spot: 10 * 70b / ~4m = 174,999.99
+            (10, 4_000_000, 70_000_000_000, 10, 174_999),
+            // spot: 20 * 1 / 3.000 = 6.6667 (source can be 18 to get 6 dest.)
+            (20, 30_000 - 20, 10_000, 18, 6),
+            // spot: 19 * 1 / 2.999 = 6.3334 (source can be 18 to get 6 dest.)
+            (19, 30_000 - 20, 10_000, 18, 6),
+            // spot: 18 * 1 / 2.999 = 6.0001
+            (18, 30_000 - 20, 10_000, 18, 6),
+            // spot: 10 * 3 / 2.0010 = 14.99
+            (10, 20_000, 30_000, 10, 14),
+            // spot: 10 * 3 / 2.0001 = 14.999
+            (10, 20_000 - 9, 30_000, 10, 14),
+            // spot: 10 * 3 / 2.0000 = 15
+            (10, 20_000 - 10, 30_000, 10, 15),
+            // spot: 100 * 3 / 6.001 = 49.99 (source can be 99 to get 49 dest.)
+            (100, 60_000, 30_000, 99, 49),
+            // spot: 99 * 3 / 6.001 = 49.49
+            (99, 60_000, 30_000, 99, 49),
+            // spot: 98 * 3 / 6.001 = 48.99 (source can be 97 to get 48 dest.)
+            (98, 60_000, 30_000, 97, 48),
         ];
         for (
             source_amount,
@@ -450,7 +466,7 @@ mod tests {
     proptest! {
         #[test]
         fn withdraw_token_conversion(
-            (pool_token_supply, pool_token_amount) in total_and_intermediate(),
+            (pool_token_supply, pool_token_amount) in total_and_intermediate(u64::MAX),
             swap_token_a_amount in 1..u64::MAX,
             swap_token_b_amount in 1..u64::MAX,
         ) {
@@ -524,7 +540,7 @@ mod tests {
     proptest! {
         #[test]
         fn curve_value_does_not_decrease_from_withdraw(
-            (pool_token_supply, pool_token_amount) in total_and_intermediate(),
+            (pool_token_supply, pool_token_amount) in total_and_intermediate(u64::MAX),
             swap_token_a_amount in 1..u64::MAX,
             swap_token_b_amount in 1..u64::MAX,
         ) {

@@ -1,7 +1,7 @@
 import { struct } from '@solana/buffer-layout';
 import { bool } from '@solana/buffer-layout-utils';
-import { Account } from '../../state';
-import { ExtensionType, getExtensionData } from '../extensionType';
+import type { Account } from '../../state/account.js';
+import { ExtensionType, getExtensionData } from '../extensionType.js';
 
 /** MemoTransfer as stored by the program */
 export interface MemoTransfer {
@@ -9,7 +9,7 @@ export interface MemoTransfer {
     requireIncomingTransferMemos: boolean;
 }
 
-/** Buffer layout for de/serializing a transfer fee config extension */
+/** Buffer layout for de/serializing a memo transfer extension */
 export const MemoTransferLayout = struct<MemoTransfer>([bool('requireIncomingTransferMemos')]);
 
 export const MEMO_TRANSFER_SIZE = MemoTransferLayout.span;

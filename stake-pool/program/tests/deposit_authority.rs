@@ -1,4 +1,5 @@
-#![cfg(feature = "test-bpf")]
+#![allow(clippy::arithmetic_side_effects)]
+#![cfg(feature = "test-sbf")]
 
 mod helpers;
 
@@ -7,7 +8,7 @@ use {
     solana_program::{instruction::InstructionError, stake},
     solana_program_test::*,
     solana_sdk::{
-        borsh::try_from_slice_unchecked,
+        borsh0_10::try_from_slice_unchecked,
         signature::{Keypair, Signer},
         transaction::TransactionError,
     },
@@ -60,6 +61,7 @@ async fn success_deposit() {
         &payer,
         &recent_blockhash,
         &stake_pool_accounts,
+        stake_pool_accounts.stake_deposit_authority_keypair.as_ref(),
     )
     .await;
 
@@ -98,9 +100,11 @@ async fn success_deposit() {
         &mut banks_client,
         &payer,
         &recent_blockhash,
+        &stake_pool_accounts.token_program_id,
         &user_pool_account,
         &stake_pool_accounts.pool_mint.pubkey(),
-        &user.pubkey(),
+        &user,
+        &[],
     )
     .await
     .unwrap();
@@ -116,7 +120,7 @@ async fn success_deposit() {
             &user,
         )
         .await;
-    assert!(error.is_none());
+    assert!(error.is_none(), "{:?}", error);
 }
 
 #[tokio::test]
@@ -140,6 +144,7 @@ async fn fail_deposit_without_authority_signature() {
         &payer,
         &recent_blockhash,
         &stake_pool_accounts,
+        stake_pool_accounts.stake_deposit_authority_keypair.as_ref(),
     )
     .await;
 
@@ -178,9 +183,11 @@ async fn fail_deposit_without_authority_signature() {
         &mut banks_client,
         &payer,
         &recent_blockhash,
+        &stake_pool_accounts.token_program_id,
         &user_pool_account,
         &stake_pool_accounts.pool_mint.pubkey(),
-        &user.pubkey(),
+        &user,
+        &[],
     )
     .await
     .unwrap();

@@ -2,22 +2,22 @@
 name = "spl-example-logging"
 version = "1.0.0"
 description = "Solana Program Library Logging Example"
-authors = ["Solana Maintainers <maintainers@solana.foundation>"]
+authors = ["Solana Labs Maintainers <maintainers@solanalabs.com>"]
 repository = "https://github.com/solana-labs/solana-program-library"
 license = "Apache-2.0"
-edition = "2018"
+edition = "2021"
 publish = false
 
 [features]
 no-entrypoint = []
-test-bpf = []
+test-sbf = []
 
 [dependencies]
-solana-program = "1.10.29"
+solana-program = ">=1.17.13,<=2"
 
 [dev-dependencies]
-solana-program-test = "1.10.29"
-solana-sdk = "1.10.29"
+solana-program-test = ">=1.17.13,<=2"
+solana-sdk = ">=1.17.13,<=2"
 
 [lib]
 crate-type = ["cdylib", "lib"]

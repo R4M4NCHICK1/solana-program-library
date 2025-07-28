@@ -1,14 +1,16 @@
+#[cfg(feature = "serde-traits")]
+use serde::{Deserialize, Serialize};
 use {
     crate::{
         error::TokenError,
-        extension::{Extension, ExtensionType, StateWithExtensionsMut},
-        pod::PodBool,
+        extension::{BaseStateWithExtensions, Extension, ExtensionType, StateWithExtensionsMut},
         state::Account,
     },
     bytemuck::{Pod, Zeroable},
     solana_program::{
         instruction::get_processed_sibling_instruction, program_error::ProgramError, pubkey::Pubkey,
     },
+    spl_pod::primitives::PodBool,
 };
 
 /// Memo Transfer extension instructions
@@ -19,6 +21,8 @@ pub mod processor;
 
 /// Memo Transfer extension for Accounts
 #[repr(C)]
+#[cfg_attr(feature = "serde-traits", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde-traits", serde(rename_all = "camelCase"))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
 pub struct MemoTransfer {
     /// Require transfers into this account to be accompanied by a memo

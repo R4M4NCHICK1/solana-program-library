@@ -1,15 +1,18 @@
-import { struct, u8, u16 } from '@solana/buffer-layout';
-import { publicKey, u64 } from '@solana/buffer-layout-utils';
-import { AccountMeta, PublicKey, Signer, TransactionInstruction } from '@solana/web3.js';
+import { struct, u16, u8 } from '@solana/buffer-layout';
+import { u64 } from '@solana/buffer-layout-utils';
+import type { AccountMeta, Signer, PublicKey } from '@solana/web3.js';
+import { TransactionInstruction } from '@solana/web3.js';
+import { programSupportsExtensions, TOKEN_2022_PROGRAM_ID } from '../../constants.js';
 import {
-    TokenUnsupportedInstructionError,
     TokenInvalidInstructionDataError,
     TokenInvalidInstructionKeysError,
     TokenInvalidInstructionProgramError,
     TokenInvalidInstructionTypeError,
-} from '../../errors';
-import { TokenInstruction } from '../../instructions/types';
-import { programSupportsExtensions, TOKEN_2022_PROGRAM_ID } from '../../constants';
+    TokenUnsupportedInstructionError,
+} from '../../errors.js';
+import { addSigners } from '../../instructions/internal.js';
+import { TokenInstruction } from '../../instructions/types.js';
+import { COptionPublicKeyLayout } from '../../serialization.js';
 
 export enum TransferFeeInstruction {
     InitializeTransferFeeConfig = 0,
@@ -26,22 +29,18 @@ export enum TransferFeeInstruction {
 export interface InitializeTransferFeeConfigInstructionData {
     instruction: TokenInstruction.TransferFeeExtension;
     transferFeeInstruction: TransferFeeInstruction.InitializeTransferFeeConfig;
-    transferFeeConfigAuthorityOption: 1 | 0;
-    transferFeeConfigAuthority: PublicKey;
-    withdrawWithheldAuthorityOption: 1 | 0;
-    withdrawWithheldAuthority: PublicKey;
+    transferFeeConfigAuthority: PublicKey | null;
+    withdrawWithheldAuthority: PublicKey | null;
     transferFeeBasisPoints: number;
-    maximumFee: BigInt;
+    maximumFee: bigint;
 }
 
 /** TODO: docs */
 export const initializeTransferFeeConfigInstructionData = struct<InitializeTransferFeeConfigInstructionData>([
     u8('instruction'),
     u8('transferFeeInstruction'),
-    u8('transferFeeConfigAuthorityOption'),
-    publicKey('transferFeeConfigAuthority'),
-    u8('withdrawWithheldAuthorityOption'),
-    publicKey('withdrawWithheldAuthority'),
+    new COptionPublicKeyLayout('transferFeeConfigAuthority'),
+    new COptionPublicKeyLayout('withdrawWithheldAuthority'),
     u16('transferFeeBasisPoints'),
     u64('maximumFee'),
 ]);
@@ -63,7 +62,7 @@ export function createInitializeTransferFeeConfigInstruction(
     transferFeeConfigAuthority: PublicKey | null,
     withdrawWithheldAuthority: PublicKey | null,
     transferFeeBasisPoints: number,
-    maximumFee: BigInt,
+    maximumFee: bigint,
     programId = TOKEN_2022_PROGRAM_ID
 ): TransactionInstruction {
     if (!programSupportsExtensions(programId)) {
@@ -76,10 +75,8 @@ export function createInitializeTransferFeeConfigInstruction(
         {
             instruction: TokenInstruction.TransferFeeExtension,
             transferFeeInstruction: TransferFeeInstruction.InitializeTransferFeeConfig,
-            transferFeeConfigAuthorityOption: transferFeeConfigAuthority ? 1 : 0,
-            transferFeeConfigAuthority: transferFeeConfigAuthority || new PublicKey(0),
-            withdrawWithheldAuthorityOption: withdrawWithheldAuthority ? 1 : 0,
-            withdrawWithheldAuthority: withdrawWithheldAuthority || new PublicKey(0),
+            transferFeeConfigAuthority: transferFeeConfigAuthority,
+            withdrawWithheldAuthority: withdrawWithheldAuthority,
             transferFeeBasisPoints: transferFeeBasisPoints,
             maximumFee: maximumFee,
         },
@@ -101,7 +98,7 @@ export interface DecodedInitializeTransferFeeConfigInstruction {
         transferFeeConfigAuthority: PublicKey | null;
         withdrawWithheldAuthority: PublicKey | null;
         transferFeeBasisPoints: number;
-        maximumFee: BigInt;
+        maximumFee: bigint;
     };
 }
 
@@ -153,7 +150,7 @@ export interface DecodedInitializeTransferFeeConfigInstructionUnchecked {
         transferFeeConfigAuthority: PublicKey | null;
         withdrawWithheldAuthority: PublicKey | null;
         transferFeeBasisPoints: number;
-        maximumFee: BigInt;
+        maximumFee: bigint;
     };
 }
 
@@ -172,9 +169,7 @@ export function decodeInitializeTransferFeeConfigInstructionUnchecked({
     const {
         instruction,
         transferFeeInstruction,
-        transferFeeConfigAuthorityOption,
         transferFeeConfigAuthority,
-        withdrawWithheldAuthorityOption,
         withdrawWithheldAuthority,
         transferFeeBasisPoints,
         maximumFee,
@@ -188,8 +183,8 @@ export function decodeInitializeTransferFeeConfigInstructionUnchecked({
         data: {
             instruction,
             transferFeeInstruction,
-            transferFeeConfigAuthority: transferFeeConfigAuthorityOption ? transferFeeConfigAuthority : null,
-            withdrawWithheldAuthority: withdrawWithheldAuthorityOption ? withdrawWithheldAuthority : null,
+            transferFeeConfigAuthority,
+            withdrawWithheldAuthority,
             transferFeeBasisPoints,
             maximumFee,
         },
@@ -200,9 +195,9 @@ export function decodeInitializeTransferFeeConfigInstructionUnchecked({
 export interface TransferCheckedWithFeeInstructionData {
     instruction: TokenInstruction.TransferFeeExtension;
     transferFeeInstruction: TransferFeeInstruction.TransferCheckedWithFee;
-    amount: BigInt;
+    amount: bigint;
     decimals: number;
-    fee: BigInt;
+    fee: bigint;
 }
 
 export const transferCheckedWithFeeInstructionData = struct<TransferCheckedWithFeeInstructionData>([
@@ -233,10 +228,10 @@ export function createTransferCheckedWithFeeInstruction(
     mint: PublicKey,
     destination: PublicKey,
     authority: PublicKey,
-    amount: BigInt,
+    amount: bigint,
     decimals: number,
-    fee: BigInt,
-    multiSigners: Signer[] = [],
+    fee: bigint,
+    multiSigners: (Signer | PublicKey)[] = [],
     programId = TOKEN_2022_PROGRAM_ID
 ): TransactionInstruction {
     if (!programSupportsExtensions(programId)) {
@@ -253,14 +248,15 @@ export function createTransferCheckedWithFeeInstruction(
         },
         data
     );
-    const keys: AccountMeta[] = [];
-    keys.push({ pubkey: source, isSigner: false, isWritable: true });
-    keys.push({ pubkey: mint, isSigner: false, isWritable: false });
-    keys.push({ pubkey: destination, isSigner: false, isWritable: true });
-    keys.push({ pubkey: authority, isSigner: !multiSigners.length, isWritable: false });
-    for (const signer of multiSigners) {
-        keys.push({ pubkey: signer.publicKey, isSigner: true, isWritable: false });
-    }
+    const keys = addSigners(
+        [
+            { pubkey: source, isSigner: false, isWritable: true },
+            { pubkey: mint, isSigner: false, isWritable: false },
+            { pubkey: destination, isSigner: false, isWritable: true },
+        ],
+        authority,
+        multiSigners
+    );
     return new TransactionInstruction({ keys, programId, data });
 }
 
@@ -277,9 +273,9 @@ export interface DecodedTransferCheckedWithFeeInstruction {
     data: {
         instruction: TokenInstruction.TransferFeeExtension;
         transferFeeInstruction: TransferFeeInstruction.TransferCheckedWithFee;
-        amount: BigInt;
+        amount: bigint;
         decimals: number;
-        fee: BigInt;
+        fee: bigint;
     };
 }
 
@@ -336,9 +332,9 @@ export interface DecodedTransferCheckedWithFeeInstructionUnchecked {
     data: {
         instruction: TokenInstruction.TransferFeeExtension;
         transferFeeInstruction: TransferFeeInstruction.TransferCheckedWithFee;
-        amount: BigInt;
+        amount: bigint;
         decimals: number;
-        fee: BigInt;
+        fee: bigint;
     };
 }
 
@@ -402,7 +398,7 @@ export function createWithdrawWithheldTokensFromMintInstruction(
     mint: PublicKey,
     destination: PublicKey,
     authority: PublicKey,
-    signers: Signer[] = [],
+    signers: (Signer | PublicKey)[] = [],
     programId = TOKEN_2022_PROGRAM_ID
 ): TransactionInstruction {
     if (!programSupportsExtensions(programId)) {
@@ -416,15 +412,14 @@ export function createWithdrawWithheldTokensFromMintInstruction(
         },
         data
     );
-    const keys: AccountMeta[] = [];
-    keys.push(
-        { pubkey: mint, isSigner: false, isWritable: true },
-        { pubkey: destination, isSigner: false, isWritable: true },
-        { pubkey: authority, isSigner: !signers.length, isWritable: false }
+    const keys = addSigners(
+        [
+            { pubkey: mint, isSigner: false, isWritable: true },
+            { pubkey: destination, isSigner: false, isWritable: true },
+        ],
+        authority,
+        signers
     );
-    for (const signer of signers) {
-        keys.push({ pubkey: signer.publicKey, isSigner: true, isWritable: false });
-    }
     return new TransactionInstruction({ keys, programId, data });
 }
 
@@ -556,7 +551,7 @@ export function createWithdrawWithheldTokensFromAccountsInstruction(
     mint: PublicKey,
     destination: PublicKey,
     authority: PublicKey,
-    signers: Signer[],
+    signers: (Signer | PublicKey)[],
     sources: PublicKey[],
     programId = TOKEN_2022_PROGRAM_ID
 ): TransactionInstruction {
@@ -572,15 +567,14 @@ export function createWithdrawWithheldTokensFromAccountsInstruction(
         },
         data
     );
-    const keys: AccountMeta[] = [];
-    keys.push(
-        { pubkey: mint, isSigner: false, isWritable: true },
-        { pubkey: destination, isSigner: false, isWritable: true },
-        { pubkey: authority, isSigner: !signers.length, isWritable: false }
+    const keys = addSigners(
+        [
+            { pubkey: mint, isSigner: false, isWritable: true },
+            { pubkey: destination, isSigner: false, isWritable: true },
+        ],
+        authority,
+        signers
     );
-    for (const signer of signers) {
-        keys.push({ pubkey: signer.publicKey, isSigner: true, isWritable: false });
-    }
     for (const source of sources) {
         keys.push({ pubkey: source, isSigner: false, isWritable: true });
     }

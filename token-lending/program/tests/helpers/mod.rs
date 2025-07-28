@@ -1,36 +1,37 @@
 #![allow(dead_code)]
 
 pub mod flash_loan_receiver;
-pub mod genesis;
 
-use assert_matches::*;
-use solana_program::{program_option::COption, program_pack::Pack, pubkey::Pubkey};
-use solana_program_test::*;
-use solana_sdk::{
-    account::Account,
-    signature::{read_keypair_file, Keypair, Signer},
-    system_instruction::create_account,
-    transaction::{Transaction, TransactionError},
-};
-use spl_token::{
-    instruction::approve,
-    state::{Account as Token, AccountState, Mint},
-};
-use spl_token_lending::{
-    instruction::{
-        borrow_obligation_liquidity, deposit_reserve_liquidity, init_lending_market,
-        init_obligation, init_reserve, liquidate_obligation, refresh_reserve,
+use {
+    assert_matches::*,
+    solana_program::{program_option::COption, program_pack::Pack, pubkey::Pubkey},
+    solana_program_test::*,
+    solana_sdk::{
+        account::Account,
+        signature::{read_keypair_file, Keypair, Signer},
+        system_instruction::create_account,
+        transaction::{Transaction, TransactionError},
     },
-    math::{Decimal, Rate, TryAdd, TryMul},
-    pyth,
-    state::{
-        InitLendingMarketParams, InitObligationParams, InitReserveParams, LendingMarket,
-        NewReserveCollateralParams, NewReserveLiquidityParams, Obligation, ObligationCollateral,
-        ObligationLiquidity, Reserve, ReserveCollateral, ReserveConfig, ReserveFees,
-        ReserveLiquidity, INITIAL_COLLATERAL_RATIO, PROGRAM_VERSION,
+    spl_token::{
+        instruction::approve,
+        state::{Account as Token, AccountState, Mint},
     },
+    spl_token_lending::{
+        instruction::{
+            borrow_obligation_liquidity, deposit_reserve_liquidity, init_lending_market,
+            init_obligation, init_reserve, liquidate_obligation, refresh_reserve,
+        },
+        math::{Decimal, Rate, TryAdd, TryMul},
+        pyth,
+        state::{
+            InitLendingMarketParams, InitObligationParams, InitReserveParams, LendingMarket,
+            NewReserveCollateralParams, NewReserveLiquidityParams, Obligation,
+            ObligationCollateral, ObligationLiquidity, Reserve, ReserveCollateral, ReserveConfig,
+            ReserveFees, ReserveLiquidity, INITIAL_COLLATERAL_RATIO, PROGRAM_VERSION,
+        },
+    },
+    std::{convert::TryInto, str::FromStr},
 };
-use std::{convert::TryInto, str::FromStr};
 
 pub const QUOTE_CURRENCY: [u8; 32] =
     *b"USD\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
@@ -47,9 +48,9 @@ pub const TEST_RESERVE_CONFIG: ReserveConfig = ReserveConfig {
     optimal_borrow_rate: 4,
     max_borrow_rate: 30,
     fees: ReserveFees {
-        /// 0.00001% (Aave borrow fee)
+        // 0.00001% (Aave borrow fee)
         borrow_fee_wad: 100_000_000_000,
-        /// 0.3% (Aave flash loan fee)
+        // 0.3% (Aave flash loan fee)
         flash_loan_fee_wad: 3_000_000_000_000_000,
         host_fee_percentage: 20,
     },
@@ -63,7 +64,7 @@ pub const SRM_PYTH_PRICE: &str = "992moaMQKs32GKZ9dxi8keyM2bUmbrwBZpK4p2K6X5Vs";
 
 pub const USDC_MINT: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
-trait AddPacked {
+pub trait AddPacked {
     fn add_packable_account<T: Pack>(
         &mut self,
         pubkey: Pubkey,
@@ -506,7 +507,7 @@ impl TestLendingMarket {
         );
 
         let recent_blockhash = banks_client.get_latest_blockhash().await.unwrap();
-        transaction.sign(&[&payer, &lending_market_keypair], recent_blockhash);
+        transaction.sign(&[payer, &lending_market_keypair], recent_blockhash);
         assert_matches!(banks_client.process_transaction(transaction).await, Ok(()));
 
         TestLendingMarket {
@@ -628,7 +629,7 @@ impl TestLendingMarket {
 
         let recent_blockhash = banks_client.get_latest_blockhash().await.unwrap();
         transaction.sign(
-            &[&payer, &user_accounts_owner, &user_transfer_authority],
+            &[payer, user_accounts_owner, &user_transfer_authority],
             recent_blockhash,
         );
         assert!(banks_client.process_transaction(transaction).await.is_ok());
@@ -651,6 +652,7 @@ impl TestLendingMarket {
             &[borrow_obligation_liquidity(
                 spl_token_lending::id(),
                 liquidity_amount,
+                None,
                 borrow_reserve.liquidity_supply_pubkey,
                 borrow_reserve.user_liquidity_pubkey,
                 borrow_reserve.pubkey,
@@ -1101,16 +1103,16 @@ pub fn add_oracle(
         product_pubkey,
         u32::MAX as u64,
         oracle_program_id.pubkey(),
-        &format!("{}.bin", product_pubkey.to_string()),
+        &format!("{}.bin", product_pubkey),
     );
 
     // Add Pyth price account after setting the price
-    let filename = &format!("{}.bin", price_pubkey.to_string());
+    let filename = &format!("{}.bin", price_pubkey);
     let mut pyth_price_data = read_file(find_file(filename).unwrap_or_else(|| {
         panic!("Unable to locate {}", filename);
     }));
 
-    let mut pyth_price = pyth::load_mut::<pyth::Price>(pyth_price_data.as_mut_slice()).unwrap();
+    let pyth_price = pyth::load_mut::<pyth::Price>(pyth_price_data.as_mut_slice()).unwrap();
 
     let decimals = 10u64
         .checked_pow(pyth_price.expo.checked_abs().unwrap().try_into().unwrap())
@@ -1153,12 +1155,12 @@ pub async fn create_and_mint_to_token_account(
 ) -> Pubkey {
     if let Some(mint_authority) = mint_authority {
         let account_pubkey =
-            create_token_account(banks_client, mint_pubkey, &payer, Some(authority), None).await;
+            create_token_account(banks_client, mint_pubkey, payer, Some(authority), None).await;
 
         mint_to(
             banks_client,
             mint_pubkey,
-            &payer,
+            payer,
             account_pubkey,
             mint_authority,
             amount,
@@ -1170,7 +1172,7 @@ pub async fn create_and_mint_to_token_account(
         create_token_account(
             banks_client,
             mint_pubkey,
-            &payer,
+            payer,
             Some(authority),
             Some(amount),
         )
@@ -1212,7 +1214,7 @@ pub async fn create_token_account(
     );
 
     let recent_blockhash = banks_client.get_latest_blockhash().await.unwrap();
-    transaction.sign(&[&payer, &token_keypair], recent_blockhash);
+    transaction.sign(&[payer, &token_keypair], recent_blockhash);
 
     assert_matches!(banks_client.process_transaction(transaction).await, Ok(()));
 

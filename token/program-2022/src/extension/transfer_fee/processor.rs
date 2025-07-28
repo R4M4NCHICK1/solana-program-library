@@ -7,7 +7,7 @@ use {
                 instruction::TransferFeeInstruction, TransferFee, TransferFeeAmount,
                 TransferFeeConfig, MAX_FEE_BASIS_POINTS,
             },
-            StateWithExtensions, StateWithExtensionsMut,
+            BaseStateWithExtensions, StateWithExtensions, StateWithExtensionsMut,
         },
         processor::Processor,
         state::{Account, Mint},
@@ -89,10 +89,11 @@ fn process_set_transfer_fee(
     }
 
     // When setting the transfer fee, we have two situations:
-    // * newer transfer fee epoch <= current epoch:
-    //     newer transfer fee is the active one, so overwrite older transfer fee with newer, then overwrite newer transfer fee
-    // * newer transfer fee epoch >= next epoch:
-    //     it was never used, so just overwrite next transfer fee
+    // * newer transfer fee epoch <= current epoch: newer transfer fee is the active
+    //   one, so overwrite older transfer fee with newer, then overwrite newer
+    //   transfer fee
+    // * newer transfer fee epoch >= next epoch: it was never used, so just
+    //   overwrite next transfer fee
     let epoch = Clock::get()?.epoch;
     if u64::from(extension.newer_transfer_fee.epoch) <= epoch {
         extension.older_transfer_fee = extension.newer_transfer_fee;
@@ -118,6 +119,9 @@ fn process_withdraw_withheld_tokens_from_mint(
     let destination_account_info = next_account_info(account_info_iter)?;
     let authority_info = next_account_info(account_info_iter)?;
     let authority_info_data_len = authority_info.data_len();
+
+    // unnecessary check, but helps for clarity
+    check_program_account(mint_account_info.owner)?;
 
     let mut mint_data = mint_account_info.data.borrow_mut();
     let mut mint = StateWithExtensionsMut::<Mint>::unpack(&mut mint_data)?;
@@ -154,9 +158,9 @@ fn process_withdraw_withheld_tokens_from_mint(
     Ok(())
 }
 
-fn harvest_from_account<'a, 'b>(
+fn harvest_from_account<'b>(
     mint_key: &'b Pubkey,
-    token_account_info: &'b AccountInfo<'a>,
+    token_account_info: &'b AccountInfo<'_>,
 ) -> Result<u64, TokenError> {
     let mut token_account_data = token_account_info.data.borrow_mut();
     let mut token_account = StateWithExtensionsMut::<Account>::unpack(&mut token_account_data)
@@ -213,6 +217,9 @@ fn process_withdraw_withheld_tokens_from_accounts(
     let num_signers = account_infos
         .len()
         .saturating_sub(num_token_accounts as usize);
+
+    // unnecessary check, but helps for clarity
+    check_program_account(mint_account_info.owner)?;
 
     let mint_data = mint_account_info.data.borrow();
     let mint = StateWithExtensions::<Mint>::unpack(&mint_data)?;

@@ -1,16 +1,9 @@
-import chai, { expect } from 'chai';
+import { expect, use } from 'chai';
 import chaiAsPromised from 'chai-as-promised';
-chai.use(chaiAsPromised);
+use(chaiAsPromised);
 
-import {
-    sendAndConfirmTransaction,
-    Connection,
-    Keypair,
-    PublicKey,
-    Signer,
-    SystemProgram,
-    Transaction,
-} from '@solana/web3.js';
+import type { Connection, PublicKey, Signer } from '@solana/web3.js';
+import { sendAndConfirmTransaction, Keypair, SystemProgram, Transaction } from '@solana/web3.js';
 import {
     createInitializeMintInstruction,
     createInitializeNonTransferableMintInstruction,
@@ -64,7 +57,7 @@ describe('nonTransferable', () => {
         expect(nonTransferable).to.not.be.null;
 
         const owner = Keypair.generate();
-        const accountLen = getAccountLen([ExtensionType.ImmutableOwner]);
+        const accountLen = getAccountLen([ExtensionType.ImmutableOwner, ExtensionType.NonTransferableAccount]);
         const lamports = await connection.getMinimumBalanceForRentExemption(accountLen);
 
         const sourceKeypair = Keypair.generate();

@@ -1,3 +1,4 @@
+#![allow(clippy::arithmetic_side_effects)]
 //! Program instruction processor
 
 use solana_program::{

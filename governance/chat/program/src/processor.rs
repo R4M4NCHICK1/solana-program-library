@@ -1,27 +1,31 @@
 //! Program processor
 
-use crate::{
-    error::GovernanceChatError,
-    instruction::GovernanceChatInstruction,
-    state::{assert_is_valid_chat_message, ChatMessage, GovernanceChatAccountType, MessageBody},
+use {
+    crate::{
+        error::GovernanceChatError,
+        instruction::GovernanceChatInstruction,
+        state::{
+            assert_is_valid_chat_message, ChatMessage, GovernanceChatAccountType, MessageBody,
+        },
+    },
+    borsh::BorshDeserialize,
+    solana_program::{
+        account_info::{next_account_info, AccountInfo},
+        clock::Clock,
+        entrypoint::ProgramResult,
+        msg,
+        program_error::ProgramError,
+        pubkey::Pubkey,
+        sysvar::Sysvar,
+    },
+    spl_governance::state::{
+        governance::get_governance_data_for_realm, proposal::get_proposal_data_for_governance,
+        realm::get_realm_data, realm_config::get_realm_config_data_for_realm,
+        token_owner_record::get_token_owner_record_data_for_realm,
+    },
+    spl_governance_addin_api::voter_weight::VoterWeightAction,
+    spl_governance_tools::account::create_and_serialize_account,
 };
-use borsh::BorshDeserialize;
-
-use solana_program::{
-    account_info::{next_account_info, AccountInfo},
-    clock::Clock,
-    entrypoint::ProgramResult,
-    msg,
-    program_error::ProgramError,
-    pubkey::Pubkey,
-    sysvar::Sysvar,
-};
-use spl_governance::state::{
-    governance::get_governance_data_for_realm, proposal::get_proposal_data_for_governance,
-    realm::get_realm_data, token_owner_record::get_token_owner_record_data_for_realm,
-};
-use spl_governance_addin_api::voter_weight::VoterWeightAction;
-use spl_governance_tools::account::create_and_serialize_account;
 
 /// Processes an instruction
 pub fn process_instruction(
@@ -85,28 +89,31 @@ pub fn process_post_message(
 
     token_owner_record_data.assert_token_owner_or_delegate_is_signer(governance_authority_info)?;
 
-    // deserialize proposal to assert it belongs to the given governance and hence belongs to the same realm as the token owner
+    // deserialize proposal to assert it belongs to the given governance and hence
+    // belongs to the same realm as the token owner
     let _proposal_data = get_proposal_data_for_governance(
         governance_program_id,
         proposal_info,
         governance_info.key,
     )?;
 
-    let realm_config_info = next_account_info(account_info_iter)?; //10
+    let realm_config_info = next_account_info(account_info_iter)?; // 10
+
+    let realm_config_data =
+        get_realm_config_data_for_realm(governance_program_id, realm_config_info, realm_info.key)?;
 
     let voter_weight = token_owner_record_data.resolve_voter_weight(
-        governance_program_id,
-        realm_config_info,
-        account_info_iter, // 11
-        realm_info.key,
+        account_info_iter, // voter_weight_record *11
         &realm_data,
+        &realm_config_data,
         VoterWeightAction::CommentProposal,
         proposal_info.key,
     )?;
 
     // The owner needs to have at least voter weight of 1 to comment on proposals
-    // Note: It can be either community or council token and is irrelevant to the proposal's governing token
-    // Note: 1 is currently hardcoded but if different level is required then it should be added to realm config
+    // Note: It can be either community or council token and is irrelevant to the
+    // proposal's governing token Note: 1 is currently hardcoded but if
+    // different level is required then it should be added to realm config
     if voter_weight < 1 {
         return Err(GovernanceChatError::NotEnoughTokensToCommentProposal.into());
     }

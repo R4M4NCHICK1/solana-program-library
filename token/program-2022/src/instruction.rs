@@ -1,13 +1,20 @@
 //! Instruction types
 
-#![allow(deprecated)] // needed to avoid deprecation warning when generating serde implementation for TokenInstruction
+// Needed to avoid deprecation warning when generating serde implementation for
+// TokenInstruction
+#![allow(deprecated)]
 
+#[cfg(feature = "serde-traits")]
+use {
+    crate::serialization::coption_fromstr,
+    serde::{Deserialize, Serialize},
+    serde_with::{As, DisplayFromStr},
+};
 use {
     crate::{
         check_program_account, check_spl_token_program_account,
         error::TokenError,
         extension::{transfer_fee::instruction::TransferFeeInstruction, ExtensionType},
-        pod::{pod_from_bytes, pod_get_packed_len},
     },
     bytemuck::Pod,
     solana_program::{
@@ -17,17 +24,11 @@ use {
         pubkey::{Pubkey, PUBKEY_BYTES},
         system_program, sysvar,
     },
+    spl_pod::bytemuck::{pod_from_bytes, pod_get_packed_len},
     std::{
         convert::{TryFrom, TryInto},
         mem::size_of,
     },
-};
-
-#[cfg(feature = "serde-traits")]
-use {
-    crate::serialization::coption_fromstr,
-    serde::{Deserialize, Serialize},
-    serde_with::{As, DisplayFromStr},
 };
 
 /// Minimum number of multisignature signers (min N)
@@ -42,6 +43,10 @@ const U64_BYTES: usize = 8;
 /// Instructions supported by the token program.
 #[repr(C)]
 #[cfg_attr(feature = "serde-traits", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "serde-traits",
+    serde(rename_all_fields = "camelCase", rename_all = "camelCase")
+)]
 #[derive(Clone, Debug, PartialEq)]
 pub enum TokenInstruction<'a> {
     /// Initializes a new mint and optionally deposits all the newly minted
@@ -59,7 +64,6 @@ pub enum TokenInstruction<'a> {
     ///
     ///   0. `[writable]` The mint to initialize.
     ///   1. `[]` Rent sysvar
-    ///
     InitializeMint {
         /// Number of base 10 digits to the right of the decimal place.
         decimals: u8,
@@ -121,8 +125,9 @@ pub enum TokenInstruction<'a> {
     /// amounts of SOL and Tokens will be transferred to the destination
     /// account.
     ///
-    /// If either account contains an `TransferFeeAmount` extension, this will fail.
-    /// Mints with the `TransferFeeConfig` extension are required in order to assess the fee.
+    /// If either account contains an `TransferFeeAmount` extension, this will
+    /// fail. Mints with the `TransferFeeConfig` extension are required in
+    /// order to assess the fee.
     ///
     /// Accounts expected by this instruction:
     ///
@@ -236,15 +241,24 @@ pub enum TokenInstruction<'a> {
     /// Close an account by transferring all its SOL to the destination account.
     /// Non-native accounts may only be closed if its token amount is zero.
     ///
-    /// Accounts with the `TransferFeeAmount` extension may only be closed if the withheld
-    /// amount is zero.
+    /// Accounts with the `TransferFeeAmount` extension may only be closed if
+    /// the withheld amount is zero.
     ///
-    /// Mints may be closed if they have the `MintCloseAuthority` extension and their token
-    /// supply is zero
+    /// Accounts with the `ConfidentialTransfer` extension may only be closed if
+    /// the pending and available balance ciphertexts are empty. Use
+    /// `ConfidentialTransferInstruction::ApplyPendingBalance` and
+    /// `ConfidentialTransferInstruction::EmptyAccount` to empty these
+    /// ciphertexts.
     ///
-    /// Note that if the account to close has a `ConfidentialTransferExtension`, the
-    /// `ConfidentialTransferInstruction::EmptyAccount` instruction must precede this
-    /// instruction.
+    /// Accounts with the `ConfidentialTransferFee` extension may only be closed
+    /// if the withheld amount ciphertext is empty. Use
+    /// `ConfidentialTransferFeeInstruction::HarvestWithheldTokensToMint` to
+    /// empty this ciphertext.
+    ///
+    /// Mints may be closed if they have the `MintCloseAuthority` extension and
+    /// their token supply is zero
+    ///
+    /// Accounts
     ///
     /// Accounts expected by this instruction:
     ///
@@ -401,10 +415,10 @@ pub enum TokenInstruction<'a> {
         /// Expected number of base 10 digits to the right of the decimal place.
         decimals: u8,
     },
-    /// Like InitializeAccount, but the owner pubkey is passed via instruction data
-    /// rather than the accounts list. This variant may be preferable when using
-    /// Cross Program Invocation from an instruction that does not need the owner's
-    /// `AccountInfo` otherwise.
+    /// Like InitializeAccount, but the owner pubkey is passed via instruction
+    /// data rather than the accounts list. This variant may be preferable
+    /// when using Cross Program Invocation from an instruction that does
+    /// not need the owner's `AccountInfo` otherwise.
     ///
     /// Accounts expected by this instruction:
     ///
@@ -413,19 +427,22 @@ pub enum TokenInstruction<'a> {
     ///   2. `[]` Rent sysvar
     InitializeAccount2 {
         /// The new account's owner/multisignature.
+        #[cfg_attr(feature = "serde-traits", serde(with = "As::<DisplayFromStr>"))]
         owner: Pubkey,
     },
     /// Given a wrapped / native token account (a token account containing SOL)
     /// updates its amount field based on the account's underlying `lamports`.
-    /// This is useful if a non-wrapped SOL account uses `system_instruction::transfer`
-    /// to move lamports to a wrapped token account, and needs to have its token
-    /// `amount` field updated.
+    /// This is useful if a non-wrapped SOL account uses
+    /// `system_instruction::transfer` to move lamports to a wrapped token
+    /// account, and needs to have its token `amount` field updated.
     ///
     /// Accounts expected by this instruction:
     ///
-    ///   0. `[writable]`  The native token account to sync with its underlying lamports.
+    ///   0. `[writable]`  The native token account to sync with its underlying
+    ///      lamports.
     SyncNative,
-    /// Like InitializeAccount2, but does not require the Rent sysvar to be provided
+    /// Like InitializeAccount2, but does not require the Rent sysvar to be
+    /// provided
     ///
     /// Accounts expected by this instruction:
     ///
@@ -433,9 +450,11 @@ pub enum TokenInstruction<'a> {
     ///   1. `[]` The mint this account will be associated with.
     InitializeAccount3 {
         /// The new account's owner/multisignature.
+        #[cfg_attr(feature = "serde-traits", serde(with = "As::<DisplayFromStr>"))]
         owner: Pubkey,
     },
-    /// Like InitializeMultisig, but does not require the Rent sysvar to be provided
+    /// Like InitializeMultisig, but does not require the Rent sysvar to be
+    /// provided
     ///
     /// Accounts expected by this instruction:
     ///
@@ -452,7 +471,6 @@ pub enum TokenInstruction<'a> {
     /// Accounts expected by this instruction:
     ///
     ///   0. `[writable]` The mint to initialize.
-    ///
     InitializeMint2 {
         /// Number of base 10 digits to the right of the decimal place.
         decimals: u8,
@@ -463,8 +481,8 @@ pub enum TokenInstruction<'a> {
         #[cfg_attr(feature = "serde-traits", serde(with = "coption_fromstr"))]
         freeze_authority: COption<Pubkey>,
     },
-    /// Gets the required size of an account for the given mint as a little-endian
-    /// `u64`.
+    /// Gets the required size of an account for the given mint as a
+    /// little-endian `u64`.
     ///
     /// Return data can be fetched using `sol_get_return_data` and deserializing
     /// the return data as a little-endian `u64`.
@@ -478,8 +496,8 @@ pub enum TokenInstruction<'a> {
     },
     /// Initialize the Immutable Owner extension for the given token account
     ///
-    /// Fails if the account has already been initialized, so must be called before
-    /// `InitializeAccount`.
+    /// Fails if the account has already been initialized, so must be called
+    /// before `InitializeAccount`.
     ///
     /// Accounts expected by this instruction:
     ///
@@ -487,14 +505,14 @@ pub enum TokenInstruction<'a> {
     ///
     /// Data expected by this instruction:
     ///   None
-    ///
     InitializeImmutableOwner,
-    /// Convert an Amount of tokens to a UiAmount `string`, using the given mint.
+    /// Convert an Amount of tokens to a UiAmount `string`, using the given
+    /// mint.
     ///
     /// Fails on an invalid mint.
     ///
-    /// Return data can be fetched using `sol_get_return_data` and deserialized with
-    /// `String::from_utf8`.
+    /// Return data can be fetched using `sol_get_return_data` and deserialized
+    /// with `String::from_utf8`.
     ///
     /// Accounts expected by this instruction:
     ///
@@ -503,7 +521,8 @@ pub enum TokenInstruction<'a> {
         /// The amount of tokens to convert.
         amount: u64,
     },
-    /// Convert a UiAmount of tokens to a little-endian `u64` raw Amount, using the given mint.
+    /// Convert a UiAmount of tokens to a little-endian `u64` raw Amount, using
+    /// the given mint.
     ///
     /// Return data can be fetched using `sol_get_return_data` and deserializing
     /// the return data as a little-endian `u64`.
@@ -535,20 +554,26 @@ pub enum TokenInstruction<'a> {
     /// The common instruction prefix for Transfer Fee extension instructions.
     ///
     /// See `extension::transfer_fee::instruction::TransferFeeInstruction` for
-    /// further details about the extended instructions that share this instruction prefix
+    /// further details about the extended instructions that share this
+    /// instruction prefix
     TransferFeeExtension(TransferFeeInstruction),
-    /// The common instruction prefix for Confidential Transfer extension instructions.
+    /// The common instruction prefix for Confidential Transfer extension
+    /// instructions.
     ///
     /// See `extension::confidential_transfer::instruction::ConfidentialTransferInstruction` for
-    /// further details about the extended instructions that share this instruction prefix
+    /// further details about the extended instructions that share this
+    /// instruction prefix
     ConfidentialTransferExtension,
-    /// The common instruction prefix for Default Account State extension instructions.
+    /// The common instruction prefix for Default Account State extension
+    /// instructions.
     ///
     /// See `extension::default_account_state::instruction::DefaultAccountStateInstruction` for
-    /// further details about the extended instructions that share this instruction prefix
+    /// further details about the extended instructions that share this
+    /// instruction prefix
     DefaultAccountStateExtension,
-    /// Check to see if a token account is large enough for a list of ExtensionTypes, and if not,
-    /// use reallocation to increase the data size.
+    /// Check to see if a token account is large enough for a list of
+    /// ExtensionTypes, and if not, use reallocation to increase the data
+    /// size.
     ///
     /// Accounts expected by this instruction:
     ///
@@ -564,33 +589,33 @@ pub enum TokenInstruction<'a> {
     ///   2. `[]` System program for reallocation funding
     ///   3. `[]` The account's multisignature owner/delegate.
     ///   4. ..4+M `[signer]` M signer accounts.
-    ///
     Reallocate {
         /// New extension types to include in the reallocated account
         extension_types: Vec<ExtensionType>,
     },
-    /// The common instruction prefix for Memo Transfer account extension instructions.
+    /// The common instruction prefix for Memo Transfer account extension
+    /// instructions.
     ///
     /// See `extension::memo_transfer::instruction::RequiredMemoTransfersInstruction` for
-    /// further details about the extended instructions that share this instruction prefix
+    /// further details about the extended instructions that share this
+    /// instruction prefix
     MemoTransferExtension,
     /// Creates the native mint.
     ///
-    /// This instruction only needs to be invoked once after deployment and is permissionless,
-    /// Wrapped SOL (`native_mint::id()`) will not be available until this instruction is
-    /// successfully executed.
+    /// This instruction only needs to be invoked once after deployment and is
+    /// permissionless, Wrapped SOL (`native_mint::id()`) will not be
+    /// available until this instruction is successfully executed.
     ///
     /// Accounts expected by this instruction:
     ///
     ///   0. `[writeable,signer]` Funding account (must be a system account)
     ///   1. `[writable]` The native mint address
     ///   2. `[]` System program for mint account funding
-    ///
     CreateNativeMint,
     /// Initialize the non transferable extension for the given mint account
     ///
-    /// Fails if the account has already been initialized, so must be called before
-    /// `InitializeMint`.
+    /// Fails if the account has already been initialized, so must be called
+    /// before `InitializeMint`.
     ///
     /// Accounts expected by this instruction:
     ///
@@ -598,16 +623,87 @@ pub enum TokenInstruction<'a> {
     ///
     /// Data expected by this instruction:
     ///   None
-    ///
     InitializeNonTransferableMint,
-    /// The common instruction prefix for Interest Bearing extension instructions.
+    /// The common instruction prefix for Interest Bearing extension
+    /// instructions.
     ///
     /// See `extension::interest_bearing_mint::instruction::InterestBearingMintInstruction` for
-    /// further details about the extended instructions that share this instruction prefix
+    /// further details about the extended instructions that share this
+    /// instruction prefix
     InterestBearingMintExtension,
+    /// The common instruction prefix for CPI Guard account extension
+    /// instructions.
+    ///
+    /// See `extension::cpi_guard::instruction::CpiGuardInstruction` for
+    /// further details about the extended instructions that share this
+    /// instruction prefix
+    CpiGuardExtension,
+    /// Initialize the permanent delegate on a new mint.
+    ///
+    /// Fails if the mint has already been initialized, so must be called before
+    /// `InitializeMint`.
+    ///
+    /// The mint must have exactly enough space allocated for the base mint (82
+    /// bytes), plus 83 bytes of padding, 1 byte reserved for the account type,
+    /// then space required for this extension, plus any others.
+    ///
+    /// Accounts expected by this instruction:
+    ///
+    ///   0. `[writable]` The mint to initialize.
+    ///
+    /// Data expected by this instruction:
+    ///   Pubkey for the permanent delegate
+    InitializePermanentDelegate {
+        /// Authority that may sign for `Transfer`s and `Burn`s on any account
+        #[cfg_attr(feature = "serde-traits", serde(with = "As::<DisplayFromStr>"))]
+        delegate: Pubkey,
+    },
+    /// The common instruction prefix for transfer hook extension instructions.
+    ///
+    /// See `extension::transfer_hook::instruction::TransferHookInstruction`
+    /// for further details about the extended instructions that share this
+    /// instruction prefix
+    TransferHookExtension,
+    /// The common instruction prefix for the confidential transfer fee
+    /// extension instructions.
+    ///
+    /// See `extension::confidential_transfer_fee::instruction::ConfidentialTransferFeeInstruction`
+    /// for further details about the extended instructions that share this
+    /// instruction prefix
+    ConfidentialTransferFeeExtension,
+    /// This instruction is to be used to rescue SOLs sent to any TokenProgram
+    /// owned account by sending them to any other account, leaving behind only
+    /// lamports for rent exemption.
+    ///
+    /// 0. `[writable]` Source Account owned by the token program
+    /// 1. `[writable]` Destination account
+    /// 2. `[signer]` Authority
+    /// 3. ..2+M `[signer]` M signer accounts.
+    WithdrawExcessLamports,
+    /// The common instruction prefix for metadata pointer extension
+    /// instructions.
+    ///
+    /// See `extension::metadata_pointer::instruction::MetadataPointerInstruction`
+    /// for further details about the extended instructions that share this
+    /// instruction prefix
+    MetadataPointerExtension,
+    /// The common instruction prefix for group pointer extension instructions.
+    ///
+    /// See `extension::group_pointer::instruction::GroupPointerInstruction`
+    /// for further details about the extended instructions that share this
+    /// instruction prefix
+    GroupPointerExtension,
+    /// The common instruction prefix for group member pointer extension
+    /// instructions.
+    ///
+    /// See `extension::group_member_pointer::instruction::GroupMemberPointerInstruction`
+    /// for further details about the extended instructions that share this
+    /// instruction prefix
+    GroupMemberPointerExtension,
 }
 impl<'a> TokenInstruction<'a> {
-    /// Unpacks a byte buffer into a [TokenInstruction](enum.TokenInstruction.html).
+    /// Unpacks a byte buffer into a
+    /// [TokenInstruction](enum.TokenInstruction.html).
     pub fn unpack(input: &'a [u8]) -> Result<Self, ProgramError> {
         use TokenError::InvalidInstruction;
 
@@ -625,7 +721,7 @@ impl<'a> TokenInstruction<'a> {
             }
             1 => Self::InitializeAccount,
             2 => {
-                let &m = rest.get(0).ok_or(InvalidInstruction)?;
+                let &m = rest.first().ok_or(InvalidInstruction)?;
                 Self::InitializeMultisig { m }
             }
             3 | 4 | 7 | 8 => {
@@ -685,7 +781,7 @@ impl<'a> TokenInstruction<'a> {
                 Self::InitializeAccount3 { owner }
             }
             19 => {
-                let &m = rest.get(0).ok_or(InvalidInstruction)?;
+                let &m = rest.first().ok_or(InvalidInstruction)?;
                 Self::InitializeMultisig2 { m }
             }
             20 => {
@@ -735,11 +831,23 @@ impl<'a> TokenInstruction<'a> {
             31 => Self::CreateNativeMint,
             32 => Self::InitializeNonTransferableMint,
             33 => Self::InterestBearingMintExtension,
+            34 => Self::CpiGuardExtension,
+            35 => {
+                let (delegate, _rest) = Self::unpack_pubkey(rest)?;
+                Self::InitializePermanentDelegate { delegate }
+            }
+            36 => Self::TransferHookExtension,
+            37 => Self::ConfidentialTransferFeeExtension,
+            38 => Self::WithdrawExcessLamports,
+            39 => Self::MetadataPointerExtension,
+            40 => Self::GroupPointerExtension,
+            41 => Self::GroupMemberPointerExtension,
             _ => return Err(TokenError::InvalidInstruction.into()),
         })
     }
 
-    /// Packs a [TokenInstruction](enum.TokenInstruction.html) into a byte buffer.
+    /// Packs a [TokenInstruction](enum.TokenInstruction.html) into a byte
+    /// buffer.
     pub fn pack(&self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(size_of::<Self>());
         match self {
@@ -832,9 +940,7 @@ impl<'a> TokenInstruction<'a> {
                 buf.extend_from_slice(mint_authority.as_ref());
                 Self::pack_pubkey_option(freeze_authority, &mut buf);
             }
-            &Self::GetAccountDataSize {
-                ref extension_types,
-            } => {
+            Self::GetAccountDataSize { extension_types } => {
                 buf.push(21);
                 for extension_type in extension_types {
                     buf.extend_from_slice(&<[u8; 2]>::from(*extension_type));
@@ -851,13 +957,11 @@ impl<'a> TokenInstruction<'a> {
                 buf.push(24);
                 buf.extend_from_slice(ui_amount.as_bytes());
             }
-            &Self::InitializeMintCloseAuthority {
-                ref close_authority,
-            } => {
+            Self::InitializeMintCloseAuthority { close_authority } => {
                 buf.push(25);
                 Self::pack_pubkey_option(close_authority, &mut buf);
             }
-            &Self::TransferFeeExtension(ref instruction) => {
+            Self::TransferFeeExtension(instruction) => {
                 buf.push(26);
                 TransferFeeInstruction::pack(instruction, &mut buf);
             }
@@ -867,9 +971,7 @@ impl<'a> TokenInstruction<'a> {
             &Self::DefaultAccountStateExtension => {
                 buf.push(28);
             }
-            &Self::Reallocate {
-                ref extension_types,
-            } => {
+            Self::Reallocate { extension_types } => {
                 buf.push(29);
                 for extension_type in extension_types {
                     buf.extend_from_slice(&<[u8; 2]>::from(*extension_type));
@@ -887,6 +989,31 @@ impl<'a> TokenInstruction<'a> {
             &Self::InterestBearingMintExtension => {
                 buf.push(33);
             }
+            &Self::CpiGuardExtension => {
+                buf.push(34);
+            }
+            Self::InitializePermanentDelegate { delegate } => {
+                buf.push(35);
+                buf.extend_from_slice(delegate.as_ref());
+            }
+            &Self::TransferHookExtension => {
+                buf.push(36);
+            }
+            &Self::ConfidentialTransferFeeExtension => {
+                buf.push(37);
+            }
+            &Self::WithdrawExcessLamports => {
+                buf.push(38);
+            }
+            &Self::MetadataPointerExtension => {
+                buf.push(39);
+            }
+            &Self::GroupPointerExtension => {
+                buf.push(40);
+            }
+            &Self::GroupMemberPointerExtension => {
+                buf.push(41);
+            }
         };
         buf
     }
@@ -894,7 +1021,7 @@ impl<'a> TokenInstruction<'a> {
     pub(crate) fn unpack_pubkey(input: &[u8]) -> Result<(Pubkey, &[u8]), ProgramError> {
         let pk = input
             .get(..PUBKEY_BYTES)
-            .map(Pubkey::new)
+            .and_then(|x| Pubkey::try_from(x).ok())
             .ok_or(TokenError::InvalidInstruction)?;
         Ok((pk, &input[PUBKEY_BYTES..]))
     }
@@ -950,6 +1077,7 @@ impl<'a> TokenInstruction<'a> {
 /// Specifies the authority type for SetAuthority instructions
 #[repr(u8)]
 #[cfg_attr(feature = "serde-traits", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde-traits", serde(rename_all = "camelCase"))]
 #[derive(Clone, Debug, PartialEq)]
 pub enum AuthorityType {
     /// Authority to mint new tokens
@@ -968,6 +1096,21 @@ pub enum AuthorityType {
     CloseMint,
     /// Authority to set the interest rate
     InterestRate,
+    /// Authority to transfer or burn any tokens for a mint
+    PermanentDelegate,
+    /// Authority to update confidential transfer mint and aprove accounts for
+    /// confidential transfers
+    ConfidentialTransferMint,
+    /// Authority to set the transfer hook program id
+    TransferHookProgramId,
+    /// Authority to set the withdraw withheld authority encryption key
+    ConfidentialTransferFeeConfig,
+    /// Authority to set the metadata address
+    MetadataPointer,
+    /// Authority to set the group address
+    GroupPointer,
+    /// Authority to set the group member address
+    GroupMemberPointer,
 }
 
 impl AuthorityType {
@@ -981,6 +1124,13 @@ impl AuthorityType {
             AuthorityType::WithheldWithdraw => 5,
             AuthorityType::CloseMint => 6,
             AuthorityType::InterestRate => 7,
+            AuthorityType::PermanentDelegate => 8,
+            AuthorityType::ConfidentialTransferMint => 9,
+            AuthorityType::TransferHookProgramId => 10,
+            AuthorityType::ConfidentialTransferFeeConfig => 11,
+            AuthorityType::MetadataPointer => 12,
+            AuthorityType::GroupPointer => 13,
+            AuthorityType::GroupMemberPointer => 14,
         }
     }
 
@@ -994,6 +1144,13 @@ impl AuthorityType {
             5 => Ok(AuthorityType::WithheldWithdraw),
             6 => Ok(AuthorityType::CloseMint),
             7 => Ok(AuthorityType::InterestRate),
+            8 => Ok(AuthorityType::PermanentDelegate),
+            9 => Ok(AuthorityType::ConfidentialTransferMint),
+            10 => Ok(AuthorityType::TransferHookProgramId),
+            11 => Ok(AuthorityType::ConfidentialTransferFeeConfig),
+            12 => Ok(AuthorityType::MetadataPointer),
+            13 => Ok(AuthorityType::GroupPointer),
+            14 => Ok(AuthorityType::GroupMemberPointer),
             _ => Err(TokenError::InvalidInstruction.into()),
         }
     }
@@ -1744,6 +1901,23 @@ pub fn initialize_non_transferable_mint(
     })
 }
 
+/// Creates an `InitializePermanentDelegate` instruction
+pub fn initialize_permanent_delegate(
+    token_program_id: &Pubkey,
+    mint_pubkey: &Pubkey,
+    delegate: &Pubkey,
+) -> Result<Instruction, ProgramError> {
+    check_program_account(token_program_id)?;
+    Ok(Instruction {
+        program_id: *token_program_id,
+        accounts: vec![AccountMeta::new(*mint_pubkey, false)],
+        data: TokenInstruction::InitializePermanentDelegate {
+            delegate: *delegate,
+        }
+        .pack(),
+    })
+}
+
 /// Utility function that checks index is between MIN_SIGNERS and MAX_SIGNERS
 pub fn is_valid_signer_index(index: usize) -> bool {
     (MIN_SIGNERS..=MAX_SIGNERS).contains(&index)
@@ -1759,11 +1933,21 @@ pub fn decode_instruction_type<T: TryFrom<u8>>(input: &[u8]) -> Result<T, Progra
 }
 
 /// Utility function for decoding instruction data
-pub fn decode_instruction_data<T: Pod>(input: &[u8]) -> Result<&T, ProgramError> {
-    if input.len() != pod_get_packed_len::<T>().saturating_add(1) {
+///
+/// Note: This function expects the entire instruction input, including the
+/// instruction type as the first byte.  This makes the code concise and safe
+/// at the expense of clarity, allowing flows such as:
+///
+/// match decode_instruction_type(input)? {
+///     InstructionType::First => {
+///         let FirstData { ... } = decode_instruction_data(input)?;
+///     }
+/// }
+pub fn decode_instruction_data<T: Pod>(input_with_type: &[u8]) -> Result<&T, ProgramError> {
+    if input_with_type.len() != pod_get_packed_len::<T>().saturating_add(1) {
         Err(ProgramError::InvalidInstructionData)
     } else {
-        pod_from_bytes(&input[1..])
+        pod_from_bytes(&input_with_type[1..])
     }
 }
 
@@ -1785,15 +1969,42 @@ pub(crate) fn encode_instruction<T: Into<u8>, D: Pod>(
     }
 }
 
+/// Creates a `WithdrawExcessLamports` Instruction
+pub fn withdraw_excess_lamports(
+    token_program_id: &Pubkey,
+    source_account: &Pubkey,
+    destination_account: &Pubkey,
+    authority: &Pubkey,
+    signers: &[&Pubkey],
+) -> Result<Instruction, ProgramError> {
+    check_program_account(token_program_id)?;
+
+    let mut accounts = vec![
+        AccountMeta::new(*source_account, false),
+        AccountMeta::new(*destination_account, false),
+        AccountMeta::new_readonly(*authority, signers.is_empty()),
+    ];
+
+    for signer in signers {
+        accounts.push(AccountMeta::new_readonly(**signer, true))
+    }
+
+    Ok(Instruction {
+        program_id: *token_program_id,
+        accounts,
+        data: TokenInstruction::WithdrawExcessLamports.pack(),
+    })
+}
+
 #[cfg(test)]
 mod test {
-    use super::*;
+    use {super::*, proptest::prelude::*};
 
     #[test]
     fn test_instruction_packing() {
         let check = TokenInstruction::InitializeMint {
             decimals: 2,
-            mint_authority: Pubkey::new(&[1u8; 32]),
+            mint_authority: Pubkey::new_from_array([1u8; 32]),
             freeze_authority: COption::None,
         };
         let packed = check.pack();
@@ -1806,8 +2017,8 @@ mod test {
 
         let check = TokenInstruction::InitializeMint {
             decimals: 2,
-            mint_authority: Pubkey::new(&[2u8; 32]),
-            freeze_authority: COption::Some(Pubkey::new(&[3u8; 32])),
+            mint_authority: Pubkey::new_from_array([2u8; 32]),
+            freeze_authority: COption::Some(Pubkey::new_from_array([3u8; 32])),
         };
         let packed = check.pack();
         let mut expect = vec![0u8, 2];
@@ -1856,7 +2067,7 @@ mod test {
 
         let check = TokenInstruction::SetAuthority {
             authority_type: AuthorityType::FreezeAccount,
-            new_authority: COption::Some(Pubkey::new(&[4u8; 32])),
+            new_authority: COption::Some(Pubkey::new_from_array([4u8; 32])),
         };
         let packed = check.pack();
         let mut expect = Vec::from([6u8, 1]);
@@ -1942,7 +2153,7 @@ mod test {
         assert_eq!(unpacked, check);
 
         let check = TokenInstruction::InitializeAccount2 {
-            owner: Pubkey::new(&[2u8; 32]),
+            owner: Pubkey::new_from_array([2u8; 32]),
         };
         let packed = check.pack();
         let mut expect = vec![16u8];
@@ -1959,7 +2170,7 @@ mod test {
         assert_eq!(unpacked, check);
 
         let check = TokenInstruction::InitializeAccount3 {
-            owner: Pubkey::new(&[2u8; 32]),
+            owner: Pubkey::new_from_array([2u8; 32]),
         };
         let packed = check.pack();
         let mut expect = vec![18u8];
@@ -1977,7 +2188,7 @@ mod test {
 
         let check = TokenInstruction::InitializeMint2 {
             decimals: 2,
-            mint_authority: Pubkey::new(&[1u8; 32]),
+            mint_authority: Pubkey::new_from_array([1u8; 32]),
             freeze_authority: COption::None,
         };
         let packed = check.pack();
@@ -1990,8 +2201,8 @@ mod test {
 
         let check = TokenInstruction::InitializeMint2 {
             decimals: 2,
-            mint_authority: Pubkey::new(&[2u8; 32]),
-            freeze_authority: COption::Some(Pubkey::new(&[3u8; 32])),
+            mint_authority: Pubkey::new_from_array([2u8; 32]),
+            freeze_authority: COption::Some(Pubkey::new_from_array([3u8; 32])),
         };
         let packed = check.pack();
         let mut expect = vec![20u8, 2];
@@ -2038,7 +2249,7 @@ mod test {
         assert_eq!(unpacked, check);
 
         let check = TokenInstruction::InitializeMintCloseAuthority {
-            close_authority: COption::Some(Pubkey::new(&[10u8; 32])),
+            close_authority: COption::Some(Pubkey::new_from_array([10u8; 32])),
         };
         let packed = check.pack();
         let mut expect = vec![25u8, 1];
@@ -2050,6 +2261,16 @@ mod test {
         let check = TokenInstruction::CreateNativeMint;
         let packed = check.pack();
         let expect = vec![31u8];
+        assert_eq!(packed, expect);
+        let unpacked = TokenInstruction::unpack(&expect).unwrap();
+        assert_eq!(unpacked, check);
+
+        let check = TokenInstruction::InitializePermanentDelegate {
+            delegate: Pubkey::new_from_array([11u8; 32]),
+        };
+        let packed = check.pack();
+        let mut expect = vec![35u8];
+        expect.extend_from_slice(&[11u8; 32]);
         assert_eq!(packed, expect);
         let unpacked = TokenInstruction::unpack(&expect).unwrap();
         assert_eq!(unpacked, check);
@@ -2283,5 +2504,15 @@ mod test {
             &mint_pubkey,
             ui_amount,
         ));
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn test_instruction_unpack_proptest(
+            data in prop::collection::vec(any::<u8>(), 0..255)
+        ) {
+            let _no_panic = TokenInstruction::unpack(&data);
+        }
     }
 }

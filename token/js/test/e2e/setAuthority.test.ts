@@ -1,12 +1,12 @@
-import chai, { expect } from 'chai';
-import chaiAsPromised from 'chai-as-promised';
-chai.use(chaiAsPromised);
-
-import { Connection, Keypair, PublicKey, Signer } from '@solana/web3.js';
+import type { Connection, PublicKey, Signer } from '@solana/web3.js';
+import { Keypair } from '@solana/web3.js';
 
 import { AuthorityType, createMint, createAccount, getAccount, getMint, setAuthority } from '../../src';
 
 import { TEST_PROGRAM_ID, newAccountWithLamports, getConnection } from '../common';
+import { expect, use } from 'chai';
+import chaiAsPromised from 'chai-as-promised';
+use(chaiAsPromised);
 
 const TEST_TOKEN_DECIMALS = 2;
 describe('setAuthority', () => {
@@ -14,18 +14,20 @@ describe('setAuthority', () => {
     let payer: Signer;
     let mint: PublicKey;
     let mintAuthority: Keypair;
+    let freezeAuthority: Keypair;
     let owner: Keypair;
     let account: PublicKey;
     before(async () => {
         connection = await getConnection();
         payer = await newAccountWithLamports(connection, 1000000000);
         mintAuthority = Keypair.generate();
+        freezeAuthority = Keypair.generate();
         const mintKeypair = Keypair.generate();
         mint = await createMint(
             connection,
             payer,
             mintAuthority.publicKey,
-            mintAuthority.publicKey,
+            freezeAuthority.publicKey,
             TEST_TOKEN_DECIMALS,
             mintKeypair,
             undefined,
@@ -114,5 +116,20 @@ describe('setAuthority', () => {
         );
         const accountInfo = await getAccount(connection, account, undefined, TEST_PROGRAM_ID);
         expect(accountInfo.closeAuthority).to.eql(closeAuthority.publicKey);
+    });
+    it('FreezeAuthority', async () => {
+        await setAuthority(
+            connection,
+            payer,
+            mint,
+            freezeAuthority,
+            AuthorityType.FreezeAccount,
+            null,
+            [],
+            undefined,
+            TEST_PROGRAM_ID
+        );
+        const mintInfo = await getMint(connection, mint, undefined, TEST_PROGRAM_ID);
+        expect(mintInfo.freezeAuthority).to.be.null;
     });
 });

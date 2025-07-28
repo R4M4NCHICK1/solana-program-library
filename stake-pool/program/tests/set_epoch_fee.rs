@@ -1,4 +1,5 @@
-#![cfg(feature = "test-bpf")]
+#![allow(clippy::arithmetic_side_effects)]
+#![cfg(feature = "test-sbf")]
 
 mod helpers;
 
@@ -6,21 +7,21 @@ use {
     helpers::*,
     solana_program_test::*,
     solana_sdk::{
-        borsh::try_from_slice_unchecked,
+        borsh0_10::try_from_slice_unchecked,
         instruction::InstructionError,
         signature::{Keypair, Signer},
         transaction::{Transaction, TransactionError},
     },
     spl_stake_pool::{
         error, id, instruction,
-        state::{Fee, FeeType, StakePool},
+        state::{Fee, FeeType, FutureEpoch, StakePool},
         MINIMUM_RESERVE_LAMPORTS,
     },
 };
 
 async fn setup() -> (ProgramTestContext, StakePoolAccounts, Fee) {
     let mut context = program_test().start_with_context().await;
-    let stake_pool_accounts = StakePoolAccounts::new();
+    let stake_pool_accounts = StakePoolAccounts::default();
     stake_pool_accounts
         .initialize_stake_pool(
             &mut context.banks_client,
@@ -75,20 +76,41 @@ async fn success() {
     let stake_pool = try_from_slice_unchecked::<StakePool>(stake_pool.data.as_slice()).unwrap();
 
     assert_eq!(stake_pool.epoch_fee, old_fee);
-    assert_eq!(stake_pool.next_epoch_fee, Some(new_fee));
+    assert_eq!(stake_pool.next_epoch_fee, FutureEpoch::Two(new_fee));
 
     let first_normal_slot = context.genesis_config().epoch_schedule.first_normal_slot;
     let slots_per_epoch = context.genesis_config().epoch_schedule.slots_per_epoch;
-
-    context
-        .warp_to_slot(first_normal_slot + slots_per_epoch)
-        .unwrap();
+    let slot = first_normal_slot + 1;
+    context.warp_to_slot(slot).unwrap();
     stake_pool_accounts
         .update_all(
             &mut context.banks_client,
             &context.payer,
             &context.last_blockhash,
-            &[],
+            false,
+        )
+        .await;
+
+    let stake_pool = get_account(
+        &mut context.banks_client,
+        &stake_pool_accounts.stake_pool.pubkey(),
+    )
+    .await;
+    let stake_pool = try_from_slice_unchecked::<StakePool>(stake_pool.data.as_slice()).unwrap();
+    assert_eq!(stake_pool.epoch_fee, old_fee);
+    assert_eq!(stake_pool.next_epoch_fee, FutureEpoch::One(new_fee));
+
+    let last_blockhash = context
+        .banks_client
+        .get_new_latest_blockhash(&context.last_blockhash)
+        .await
+        .unwrap();
+    context.warp_to_slot(slot + slots_per_epoch).unwrap();
+    stake_pool_accounts
+        .update_all(
+            &mut context.banks_client,
+            &context.payer,
+            &last_blockhash,
             false,
         )
         .await;
@@ -100,7 +122,7 @@ async fn success() {
     .await;
     let stake_pool = try_from_slice_unchecked::<StakePool>(stake_pool.data.as_slice()).unwrap();
     assert_eq!(stake_pool.epoch_fee, new_fee);
-    assert_eq!(stake_pool.next_epoch_fee, None);
+    assert_eq!(stake_pool.next_epoch_fee, FutureEpoch::None);
 }
 
 #[tokio::test]
@@ -175,7 +197,7 @@ async fn fail_high_fee() {
 #[tokio::test]
 async fn fail_not_updated() {
     let mut context = program_test().start_with_context().await;
-    let stake_pool_accounts = StakePoolAccounts::new();
+    let stake_pool_accounts = StakePoolAccounts::default();
     stake_pool_accounts
         .initialize_stake_pool(
             &mut context.banks_client,
@@ -192,10 +214,7 @@ async fn fail_not_updated() {
 
     // move forward so an update is required
     let first_normal_slot = context.genesis_config().epoch_schedule.first_normal_slot;
-    let slots_per_epoch = context.genesis_config().epoch_schedule.slots_per_epoch;
-    context
-        .warp_to_slot(first_normal_slot + slots_per_epoch)
-        .unwrap();
+    context.warp_to_slot(first_normal_slot + 1).unwrap();
 
     let transaction = Transaction::new_signed_with_payer(
         &[instruction::set_fee(

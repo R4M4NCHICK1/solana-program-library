@@ -1,4 +1,5 @@
-#![cfg(feature = "test-bpf")]
+#![allow(clippy::arithmetic_side_effects)]
+#![cfg(feature = "test-sbf")]
 
 mod helpers;
 
@@ -7,7 +8,7 @@ use {
     solana_program::hash::Hash,
     solana_program_test::*,
     solana_sdk::{
-        borsh::try_from_slice_unchecked,
+        borsh0_10::try_from_slice_unchecked,
         instruction::InstructionError,
         pubkey::Pubkey,
         signature::{Keypair, Signer},
@@ -29,7 +30,7 @@ async fn setup() -> (
     ValidatorStakeAccount,
 ) {
     let (mut banks_client, payer, recent_blockhash) = program_test().start().await;
-    let stake_pool_accounts = StakePoolAccounts::new();
+    let stake_pool_accounts = StakePoolAccounts::default();
     stake_pool_accounts
         .initialize_stake_pool(
             &mut banks_client,
@@ -45,6 +46,7 @@ async fn setup() -> (
         &payer,
         &recent_blockhash,
         &stake_pool_accounts,
+        None,
     )
     .await;
 
@@ -72,7 +74,7 @@ async fn success_deposit() {
             Some(vote_account_address),
         )
         .await;
-    assert!(error.is_none());
+    assert!(error.is_none(), "{:?}", error);
 
     let stake_pool = get_account(&mut banks_client, &stake_pool_accounts.stake_pool.pubkey()).await;
     let stake_pool = try_from_slice_unchecked::<StakePool>(stake_pool.data.as_slice()).unwrap();
@@ -100,7 +102,7 @@ async fn success_withdraw() {
             Some(vote_account_address),
         )
         .await;
-    assert!(error.is_none());
+    assert!(error.is_none(), "{:?}", error);
 
     let stake_pool = get_account(&mut banks_client, &stake_pool_accounts.stake_pool.pubkey()).await;
     let stake_pool = try_from_slice_unchecked::<StakePool>(stake_pool.data.as_slice()).unwrap();
@@ -127,7 +129,7 @@ async fn success_unset() {
             Some(vote_account_address),
         )
         .await;
-    assert!(error.is_none());
+    assert!(error.is_none(), "{:?}", error);
 
     let stake_pool = get_account(&mut banks_client, &stake_pool_accounts.stake_pool.pubkey()).await;
     let stake_pool = try_from_slice_unchecked::<StakePool>(stake_pool.data.as_slice()).unwrap();
@@ -146,7 +148,7 @@ async fn success_unset() {
             None,
         )
         .await;
-    assert!(error.is_none());
+    assert!(error.is_none(), "{:?}", error);
 
     let stake_pool = get_account(&mut banks_client, &stake_pool_accounts.stake_pool.pubkey()).await;
     let stake_pool = try_from_slice_unchecked::<StakePool>(stake_pool.data.as_slice()).unwrap();
@@ -228,20 +230,16 @@ async fn fail_ready_for_removal() {
         &stake_pool_accounts.stake_pool.pubkey(),
         transient_stake_seed,
     );
-    let new_authority = Pubkey::new_unique();
-    let destination_stake = Keypair::new();
-    let remove_err = stake_pool_accounts
+    let error = stake_pool_accounts
         .remove_validator_from_pool(
             &mut banks_client,
             &payer,
             &recent_blockhash,
-            &new_authority,
             &validator_stake_account.stake_account,
             &transient_stake_address,
-            &destination_stake,
         )
         .await;
-    assert!(remove_err.is_none());
+    assert!(error.is_none(), "{:?}", error);
 
     let error = stake_pool_accounts
         .set_preferred_validator(

@@ -2,22 +2,24 @@ use {
     crate::{
         error::TokenError,
         extension::{Extension, ExtensionType},
-        pod::*,
     },
     bytemuck::{Pod, Zeroable},
-    solana_program::{entrypoint::ProgramResult, pubkey::Pubkey},
-    solana_zk_token_sdk::zk_token_elgamal::pod,
+    solana_program::entrypoint::ProgramResult,
+    solana_zk_token_sdk::zk_token_elgamal::pod::{AeCiphertext, ElGamalCiphertext, ElGamalPubkey},
+    spl_pod::{
+        bytemuck::pod_from_bytes,
+        optional_keys::{OptionalNonZeroElGamalPubkey, OptionalNonZeroPubkey},
+        primitives::{PodBool, PodU64},
+    },
 };
 
 /// Maximum bit length of any deposit or transfer amount
 ///
 /// Any deposit or transfer amount must be less than 2^48
-pub const MAXIMUM_DEPOSIT_TRANSFER_AMOUNT_BIT_LENGTH: usize = 48;
+pub const MAXIMUM_DEPOSIT_TRANSFER_AMOUNT: u64 = (u16::MAX as u64) + (1 << 16) * (u32::MAX as u64);
 
 /// Bit length of the low bits of pending balance plaintext
-pub const PENDING_BALANCE_LO_BIT_LENGTH: usize = 16;
-/// Bit length of the high bits of pending balance plaintext
-pub const PENDING_BALANCE_HI_BIT_LENGTH: usize = 48;
+pub const PENDING_BALANCE_LO_BIT_LENGTH: u32 = 16;
 
 /// Confidential Transfer Extension instructions
 pub mod instruction;
@@ -25,53 +27,53 @@ pub mod instruction;
 /// Confidential Transfer Extension processor
 pub mod processor;
 
-/// ElGamal public key used for encryption
-pub type EncryptionPubkey = pod::ElGamalPubkey;
+/// Helper functions to verify zero-knowledge proofs in the Confidential
+/// Transfer Extension
+pub mod verify_proof;
+
+/// Helper functions to generate split zero-knowledge proofs for confidential
+/// transfers in the Confidential Transfer Extension.
+///
+/// The logic in this submodule should belong to the `solana-zk-token-sdk` and
+/// will be removed with the next upgrade to the Solana program.
+#[cfg(not(target_os = "solana"))]
+pub mod split_proof_generation;
+
+/// Confidential Transfer Extension account information needed for instructions
+#[cfg(not(target_os = "solana"))]
+pub mod account_info;
+
+/// Ciphertext extraction and proof related helper logic
+///
+/// This submodule should be removed with the next upgrade to the Solana program
+pub mod ciphertext_extraction;
+
 /// ElGamal ciphertext containing an account balance
-pub type EncryptedBalance = pod::ElGamalCiphertext;
+pub type EncryptedBalance = ElGamalCiphertext;
 /// Authenticated encryption containing an account balance
-pub type DecryptableBalance = pod::AeCiphertext;
-/// (aggregated) ElGamal ciphertext containing a transfer fee
-pub type EncryptedFee = pod::FeeEncryption;
-/// ElGamal ciphertext containing a withheld amount
-pub type EncryptedWithheldAmount = pod::ElGamalCiphertext;
+pub type DecryptableBalance = AeCiphertext;
 
 /// Confidential transfer mint configuration
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
 pub struct ConfidentialTransferMint {
-    /// Authority to modify the `ConfidentialTransferMint` configuration and to approve new
-    /// accounts (if `auto_approve_new_accounts` is true)
-    ///
-    /// Note that setting an authority of `Pubkey::default()` is the idiomatic way to disable
-    /// future changes to the configuration.
+    /// Authority to modify the `ConfidentialTransferMint` configuration and to
+    /// approve new accounts (if `auto_approve_new_accounts` is true)
     ///
     /// The legacy Token Multisig account is not supported as the authority
-    pub authority: Pubkey,
+    pub authority: OptionalNonZeroPubkey,
 
-    /// Indicate if newly configured accounts must be approved by the `authority` before they may be
-    /// used by the user.
+    /// Indicate if newly configured accounts must be approved by the
+    /// `authority` before they may be used by the user.
     ///
-    /// * If `true`, no approval is required and new accounts may be used immediately
+    /// * If `true`, no approval is required and new accounts may be used
+    ///   immediately
     /// * If `false`, the authority must approve newly configured accounts (see
-    ///              `ConfidentialTransferInstruction::ConfigureAccount`)
+    ///   `ConfidentialTransferInstruction::ConfigureAccount`)
     pub auto_approve_new_accounts: PodBool,
 
-    /// * If non-zero, transfers must include ElGamal cypertext with this public key permitting the
-    /// auditor to decode the transfer amount.
-    /// * If all zero, auditing is currently disabled.
-    pub auditor_encryption_pubkey: EncryptionPubkey,
-
-    /// * If non-zero, transfers must include ElGamal cypertext of the transfer fee with this
-    /// public key. If this is the case, but the base mint is not extended for fees, then any
-    /// transfer will fail.
-    /// * If all zero, transfer fee is disabled. If this is the case, but the base mint is extended
-    /// for fees, then any transfer will fail.
-    pub withdraw_withheld_authority_encryption_pubkey: EncryptionPubkey,
-
-    /// Withheld transfer fee confidential tokens that have been moved to the mint for withdrawal.
-    /// This will always be zero if fees are never enabled.
-    pub withheld_amount: EncryptedWithheldAmount,
+    /// Authority to decode any transfer amount in a confidential transafer.
+    pub auditor_elgamal_pubkey: OptionalNonZeroElGamalPubkey,
 }
 
 impl Extension for ConfidentialTransferMint {
@@ -82,17 +84,18 @@ impl Extension for ConfidentialTransferMint {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
 pub struct ConfidentialTransferAccount {
-    /// `true` if this account has been approved for use. All confidential transfer operations for
-    /// the account will fail until approval is granted.
+    /// `true` if this account has been approved for use. All confidential
+    /// transfer operations for the account will fail until approval is
+    /// granted.
     pub approved: PodBool,
 
     /// The public key associated with ElGamal encryption
-    pub encryption_pubkey: EncryptionPubkey,
+    pub elgamal_pubkey: ElGamalPubkey,
 
-    /// The low 16 bits of the pending balance (encrypted by `encryption_pubkey`)
+    /// The low 16 bits of the pending balance (encrypted by `elgamal_pubkey`)
     pub pending_balance_lo: EncryptedBalance,
 
-    /// The high 48 bits of the pending balance (encrypted by `encryption_pubkey`)
+    /// The high 48 bits of the pending balance (encrypted by `elgamal_pubkey`)
     pub pending_balance_hi: EncryptedBalance,
 
     /// The available balance (encrypted by `encrypiton_pubkey`)
@@ -101,27 +104,29 @@ pub struct ConfidentialTransferAccount {
     /// The decryptable available balance
     pub decryptable_available_balance: DecryptableBalance,
 
-    /// `pending_balance` may only be credited by `Deposit` or `Transfer` instructions if `true`
-    pub allow_balance_credits: PodBool,
+    /// If `false`, the extended account rejects any incoming confidential
+    /// transfers
+    pub allow_confidential_credits: PodBool,
 
-    /// The total number of `Deposit` and `Transfer` instructions that have credited
-    /// `pending_balance`
+    /// If `false`, the base account rejects any incoming transfers
+    pub allow_non_confidential_credits: PodBool,
+
+    /// The total number of `Deposit` and `Transfer` instructions that have
+    /// credited `pending_balance`
     pub pending_balance_credit_counter: PodU64,
 
-    /// The maximum number of `Deposit` and `Transfer` instructions that can credit
-    /// `pending_balance` before the `ApplyPendingBalance` instruction is executed
+    /// The maximum number of `Deposit` and `Transfer` instructions that can
+    /// credit `pending_balance` before the `ApplyPendingBalance`
+    /// instruction is executed
     pub maximum_pending_balance_credit_counter: PodU64,
 
-    /// The `expected_pending_balance_credit_counter` value that was included in the last
-    /// `ApplyPendingBalance` instruction
+    /// The `expected_pending_balance_credit_counter` value that was included in
+    /// the last `ApplyPendingBalance` instruction
     pub expected_pending_balance_credit_counter: PodU64,
 
-    /// The actual `pending_balance_credit_counter` when the last `ApplyPendingBalance` instruction
-    /// was executed
+    /// The actual `pending_balance_credit_counter` when the last
+    /// `ApplyPendingBalance` instruction was executed
     pub actual_pending_balance_credit_counter: PodU64,
-
-    /// The withheld amount of fees. This will always be zero if fees are never enabled.
-    pub withheld_amount: EncryptedWithheldAmount,
 }
 
 impl Extension for ConfidentialTransferAccount {
@@ -129,7 +134,7 @@ impl Extension for ConfidentialTransferAccount {
 }
 
 impl ConfidentialTransferAccount {
-    /// Check if a `ConfidentialTransferAccount` has been approved for use
+    /// Check if a `ConfidentialTransferAccount` has been approved for use.
     pub fn approved(&self) -> ProgramResult {
         if bool::from(&self.approved) {
             Ok(())
@@ -138,16 +143,67 @@ impl ConfidentialTransferAccount {
         }
     }
 
-    /// Check if a `ConfidentialTransferAccount` is in a closable state
+    /// Check if a `ConfidentialTransferAccount` is in a closable state.
     pub fn closable(&self) -> ProgramResult {
         if self.pending_balance_lo == EncryptedBalance::zeroed()
             && self.pending_balance_hi == EncryptedBalance::zeroed()
             && self.available_balance == EncryptedBalance::zeroed()
-            && self.withheld_amount == EncryptedWithheldAmount::zeroed()
         {
             Ok(())
         } else {
             Err(TokenError::ConfidentialTransferAccountHasBalance.into())
         }
+    }
+
+    /// Check if a base account of a `ConfidentialTransferAccount` accepts
+    /// non-confidential transfers.
+    pub fn non_confidential_transfer_allowed(&self) -> ProgramResult {
+        if bool::from(&self.allow_non_confidential_credits) {
+            Ok(())
+        } else {
+            Err(TokenError::NonConfidentialTransfersDisabled.into())
+        }
+    }
+
+    /// Checks if a `ConfidentialTransferAccount` is configured to send funds.
+    pub fn valid_as_source(&self) -> ProgramResult {
+        self.approved()
+    }
+
+    /// Checks if a confidential extension is configured to receive funds.
+    ///
+    /// A destination account can receive funds if the following conditions are
+    /// satisfied:
+    ///   1. The account is approved by the confidential transfer mint authority
+    ///   2. The account is not disabled by the account owner
+    ///   3. The number of credits into the account has not reached the maximum
+    ///      credit counter
+    pub fn valid_as_destination(&self) -> ProgramResult {
+        self.approved()?;
+
+        if !bool::from(self.allow_confidential_credits) {
+            return Err(TokenError::ConfidentialTransferDepositsAndTransfersDisabled.into());
+        }
+
+        let new_destination_pending_balance_credit_counter =
+            u64::from(self.pending_balance_credit_counter)
+                .checked_add(1)
+                .ok_or(TokenError::Overflow)?;
+        if new_destination_pending_balance_credit_counter
+            > u64::from(self.maximum_pending_balance_credit_counter)
+        {
+            return Err(TokenError::MaximumPendingBalanceCreditCounterExceeded.into());
+        }
+
+        Ok(())
+    }
+
+    /// Increments a confidential extension pending balance credit counter.
+    pub fn increment_pending_balance_credit_counter(&mut self) -> ProgramResult {
+        self.pending_balance_credit_counter = (u64::from(self.pending_balance_credit_counter)
+            .checked_add(1)
+            .ok_or(TokenError::Overflow)?)
+        .into();
+        Ok(())
     }
 }

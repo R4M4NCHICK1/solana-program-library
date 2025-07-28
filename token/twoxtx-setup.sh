@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Patch in a Solana v1.10 monorepo that supports 2x transactions for testing the
+# Patch in a Solana monorepo that supports 2x transactions for testing the
 # SPL Token 2022 Confidential Transfer extension
 #
 
@@ -20,9 +20,10 @@ if [[ ! -d twoxtx-solana ]]; then
 fi
 
 if [[ ! -f twoxtx-solana/.twoxtx-patched ]]; then
-  git -C twoxtx-solana am "$PWD"/twoxtx.patch
+  git -C twoxtx-solana am -3 "$PWD"/twoxtx.patch
   touch twoxtx-solana/.twoxtx-patched
 fi
 
 ../patch.crates-io.sh twoxtx-solana
+
 exit 0

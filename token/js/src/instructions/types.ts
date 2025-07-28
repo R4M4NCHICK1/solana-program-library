@@ -34,4 +34,10 @@ export enum TokenInstruction {
     CreateNativeMint = 31,
     InitializeNonTransferableMint = 32,
     InterestBearingMintExtension = 33,
+    CpiGuardExtension = 34,
+    InitializePermanentDelegate = 35,
+    TransferHookExtension = 36,
+    // ConfidentialTransferFeeExtension = 37,
+    // WithdrawalExcessLamports = 38,
+    MetadataPointerExtension = 39,
 }

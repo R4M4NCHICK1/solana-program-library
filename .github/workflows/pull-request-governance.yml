@@ -3,21 +3,37 @@ name: Governance Pull Request
 on:
   pull_request:
     paths:
-    - 'governance/**'
-    - 'token/**'
-    - 'ci/*-version.sh'
+      - "governance/**"
+      - "token/**"
+      - "ci/*-version.sh"
+      - '!token/js/**'
   push:
     branches: [master]
     paths:
-    - 'governance/**'
-    - 'token/**'
-    - 'ci/*-version.sh'
+      - "governance/**"
+      - "token/**"
+      - "ci/*-version.sh"
+      - '!token/js/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  cargo-test-bpf:
+  cargo-test-sbf:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - name: Clean up space on runner machine
+        # Workaround to provide additional free space for testing.
+        #   https://github.com/actions/virtual-environments/issues/2840
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf "/usr/local/share/boost"
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+
+      - uses: actions/checkout@v4
 
       - name: Set env vars
         run: |
@@ -26,26 +42,24 @@ jobs:
           source ci/solana-version.sh
           echo "SOLANA_VERSION=$solana_version" >> $GITHUB_ENV
 
-      - uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_STABLE }}
-          override: true
-          profile: minimal
 
-      - uses: actions/cache@v2
+      - uses: actions/cache@v3
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
           key: cargo-build-${{ hashFiles('**/Cargo.lock') }}-${{ env.RUST_STABLE}}
 
-      - uses: actions/cache@v2
+      - uses: actions/cache@v3
         with:
           path: |
             ~/.cargo/bin/rustfilt
-          key: cargo-bpf-bins-${{ runner.os }}
+          key: cargo-sbf-bins-${{ runner.os }}
 
-      - uses: actions/cache@v2
+      - uses: actions/cache@v3
         with:
           path: ~/.cache/solana
           key: solana-${{ env.SOLANA_VERSION }}
@@ -57,4 +71,5 @@ jobs:
           echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
 
       - name: Build and test
-        run: ./ci/cargo-test-bpf.sh governance
+        timeout-minutes: 60
+        run: ./ci/cargo-test-sbf.sh governance

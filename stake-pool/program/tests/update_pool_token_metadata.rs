@@ -1,12 +1,9 @@
-#![cfg(feature = "test-bpf")]
+#![allow(clippy::arithmetic_side_effects)]
+#![cfg(feature = "test-sbf")]
 mod helpers;
 
 use {
     helpers::*,
-    mpl_token_metadata::{
-        state::{MAX_NAME_LENGTH, MAX_SYMBOL_LENGTH, MAX_URI_LENGTH},
-        utils::puffed_out_string,
-    },
     solana_program::instruction::InstructionError,
     solana_program_test::*,
     solana_sdk::{
@@ -23,7 +20,7 @@ async fn setup() -> (ProgramTestContext, StakePoolAccounts) {
     let mut context = program_test_with_metadata_program()
         .start_with_context()
         .await;
-    let stake_pool_accounts = StakePoolAccounts::new();
+    let stake_pool_accounts = StakePoolAccounts::default();
     stake_pool_accounts
         .initialize_stake_pool(
             &mut context.banks_client,
@@ -73,10 +70,6 @@ async fn success_update_pool_token_metadata() {
     let updated_symbol = "USYM";
     let updated_uri = "updated_uri";
 
-    let puffed_name = puffed_out_string(&updated_name, MAX_NAME_LENGTH);
-    let puffed_symbol = puffed_out_string(&updated_symbol, MAX_SYMBOL_LENGTH);
-    let puffed_uri = puffed_out_string(&updated_uri, MAX_URI_LENGTH);
-
     let ix = instruction::update_token_metadata(
         &spl_stake_pool::id(),
         &stake_pool_accounts.stake_pool.pubkey(),
@@ -106,9 +99,9 @@ async fn success_update_pool_token_metadata() {
     )
     .await;
 
-    assert_eq!(metadata.data.name.to_string(), puffed_name);
-    assert_eq!(metadata.data.symbol.to_string(), puffed_symbol);
-    assert_eq!(metadata.data.uri.to_string(), puffed_uri);
+    assert!(metadata.name.starts_with(updated_name));
+    assert!(metadata.symbol.starts_with(updated_symbol));
+    assert!(metadata.uri.starts_with(updated_uri));
 }
 
 #[tokio::test]

@@ -1,19 +1,23 @@
 //! Error types
 
-use num_derive::FromPrimitive;
-use solana_program::{
-    decode_error::DecodeError,
-    msg,
-    program_error::{PrintProgramError, ProgramError},
+use {
+    num_derive::FromPrimitive,
+    solana_program::{
+        decode_error::DecodeError,
+        msg,
+        program_error::{PrintProgramError, ProgramError},
+    },
+    thiserror::Error,
 };
-use thiserror::Error;
 
 /// Errors that may be returned by the Governance program
+// Start Governance custom errors from 500 to avoid conflicts with programs
+// invoked via CPI
 #[derive(Clone, Debug, Eq, Error, FromPrimitive, PartialEq)]
 pub enum GovernanceError {
     /// Invalid instruction passed to program
     #[error("Invalid instruction passed to program")]
-    InvalidInstruction = 500, // Start Governance custom errors from 500 to avoid conflicts with programs invoked via CPI
+    InvalidInstruction = 500,
 
     /// Realm with the given name and governing mints already exists
     #[error("Realm with the given name and governing mints already exists")]
@@ -83,7 +87,8 @@ pub enum GovernanceError {
     #[error("Invalid Governance config: Vote threshold percentage out of range")]
     InvalidVoteThresholdPercentage, // 517
 
-    /// Proposal for the given Governance, Governing Token Mint and index already exists
+    /// Proposal for the given Governance, Governing Token Mint and index
+    /// already exists
     #[error("Proposal for the given Governance, Governing Token Mint and index already exists")]
     ProposalAlreadyExists, // 518
 
@@ -137,31 +142,31 @@ pub enum GovernanceError {
 
     /// Invalid State: Can't vote
     #[error("Invalid State: Can't vote")]
-    InvalidStateCannotVote,
+    InvalidStateCannotVote, // 531
 
     /// Invalid State: Can't finalize vote
     #[error("Invalid State: Can't finalize vote")]
-    InvalidStateCannotFinalize,
+    InvalidStateCannotFinalize, // 532
 
     /// Invalid State: Can't cancel Proposal
     #[error("Invalid State: Can't cancel Proposal")]
-    InvalidStateCannotCancelProposal,
+    InvalidStateCannotCancelProposal, // 533
 
     /// Vote already relinquished
     #[error("Vote already relinquished")]
-    VoteAlreadyRelinquished,
+    VoteAlreadyRelinquished, // 534
 
     /// Can't finalize vote. Voting still in progress
     #[error("Can't finalize vote. Voting still in progress")]
-    CannotFinalizeVotingInProgress,
+    CannotFinalizeVotingInProgress, // 535
 
     /// Proposal voting time expired
     #[error("Proposal voting time expired")]
-    ProposalVotingTimeExpired,
+    ProposalVotingTimeExpired, // 536
 
     /// Invalid Signatory Mint
     #[error("Invalid Signatory Mint")]
-    InvalidSignatoryMint,
+    InvalidSignatoryMint, // 537
 
     /// Proposal does not belong to the given Governance
     #[error("Proposal does not belong to the given Governance")]
@@ -227,7 +232,8 @@ pub enum GovernanceError {
     #[error("Invalid ProgramData account Data")]
     InvalidProgramDataAccountData, // 552
 
-    /// Provided upgrade authority doesn't match current program upgrade authority
+    /// Provided upgrade authority doesn't match current program upgrade
+    /// authority
     #[error("Provided upgrade authority doesn't match current program upgrade authority")]
     InvalidUpgradeAuthority, // 553
 
@@ -255,29 +261,29 @@ pub enum GovernanceError {
     #[error("Given VoteWeightSource is not supported")]
     VoteWeightSourceNotSupported, // 559
 
-    /// GoverningTokenMint not allowed to vote
-    #[error("GoverningTokenMint not allowed to vote")]
-    GoverningTokenMintNotAllowedToVote, // 560
+    /// Legacy1
+    #[error("Legacy1")]
+    Legacy1, // 560
 
     /// Governance PDA must sign
     #[error("Governance PDA must sign")]
-    GovernancePdaMustSign,
+    GovernancePdaMustSign, // 561
 
     /// Transaction already flagged with error
     #[error("Transaction already flagged with error")]
-    TransactionAlreadyFlaggedWithError,
+    TransactionAlreadyFlaggedWithError, // 562
 
     /// Invalid Realm for Governance
     #[error("Invalid Realm for Governance")]
-    InvalidRealmForGovernance,
+    InvalidRealmForGovernance, // 563
 
     /// Invalid Authority for Realm
     #[error("Invalid Authority for Realm")]
-    InvalidAuthorityForRealm,
+    InvalidAuthorityForRealm, // 564
 
     /// Realm has no authority
     #[error("Realm has no authority")]
-    RealmHasNoAuthority,
+    RealmHasNoAuthority, // 565
 
     /// Realm authority must sign
     #[error("Realm authority must sign")]
@@ -285,127 +291,235 @@ pub enum GovernanceError {
 
     /// Invalid governing token holding account
     #[error("Invalid governing token holding account")]
-    InvalidGoverningTokenHoldingAccount,
+    InvalidGoverningTokenHoldingAccount, // 567
 
     /// Realm council mint change is not supported
     #[error("Realm council mint change is not supported")]
-    RealmCouncilMintChangeIsNotSupported,
+    RealmCouncilMintChangeIsNotSupported, // 568
 
-    /// Not supported mint max vote weight sourcef
-    #[error("Not supported mint max vote weight source")]
-    MintMaxVoteWeightSourceNotSupported,
+    /// Invalid max voter weight absolute value
+    #[error("Invalid max voter weight absolute value")]
+    InvalidMaxVoterWeightAbsoluteValue, // 569
 
-    /// Invalid max vote weight supply fraction
-    #[error("Invalid max vote weight supply fraction")]
-    InvalidMaxVoteWeightSupplyFraction,
+    /// Invalid max voter weight supply fraction
+    #[error("Invalid max voter weight supply fraction")]
+    InvalidMaxVoterWeightSupplyFraction, // 570
 
     /// Owner doesn't have enough governing tokens to create Governance
     #[error("Owner doesn't have enough governing tokens to create Governance")]
-    NotEnoughTokensToCreateGovernance,
+    NotEnoughTokensToCreateGovernance, // 571
 
     /// Too many outstanding proposals
     #[error("Too many outstanding proposals")]
-    TooManyOutstandingProposals,
+    TooManyOutstandingProposals, // 572
 
     /// All proposals must be finalized to withdraw governing tokens
     #[error("All proposals must be finalized to withdraw governing tokens")]
-    AllProposalsMustBeFinalisedToWithdrawGoverningTokens,
+    AllProposalsMustBeFinalisedToWithdrawGoverningTokens, // 573
 
     /// Invalid VoterWeightRecord for Realm
     #[error("Invalid VoterWeightRecord for Realm")]
-    InvalidVoterWeightRecordForRealm,
+    InvalidVoterWeightRecordForRealm, // 574
 
     /// Invalid VoterWeightRecord for GoverningTokenMint
     #[error("Invalid VoterWeightRecord for GoverningTokenMint")]
-    InvalidVoterWeightRecordForGoverningTokenMint,
+    InvalidVoterWeightRecordForGoverningTokenMint, // 575
 
     /// Invalid VoterWeightRecord for TokenOwner
     #[error("Invalid VoterWeightRecord for TokenOwner")]
-    InvalidVoterWeightRecordForTokenOwner,
+    InvalidVoterWeightRecordForTokenOwner, // 576
 
     /// VoterWeightRecord expired
     #[error("VoterWeightRecord expired")]
-    VoterWeightRecordExpired,
+    VoterWeightRecordExpired, // 577
 
     /// Invalid RealmConfig for Realm
     #[error("Invalid RealmConfig for Realm")]
-    InvalidRealmConfigForRealm,
+    InvalidRealmConfigForRealm, // 578
 
     /// TokenOwnerRecord already exists
     #[error("TokenOwnerRecord already exists")]
-    TokenOwnerRecordAlreadyExists,
+    TokenOwnerRecordAlreadyExists, // 579
 
     /// Governing token deposits not allowed
     #[error("Governing token deposits not allowed")]
-    GoverningTokenDepositsNotAllowed,
+    GoverningTokenDepositsNotAllowed, // 580
 
     /// Invalid vote choice weight percentage
     #[error("Invalid vote choice weight percentage")]
-    InvalidVoteChoiceWeightPercentage,
+    InvalidVoteChoiceWeightPercentage, // 581
 
     /// Vote type not supported
     #[error("Vote type not supported")]
-    VoteTypeNotSupported,
+    VoteTypeNotSupported, // 582
 
     /// InvalidProposalOptions
     #[error("Invalid proposal options")]
-    InvalidProposalOptions,
+    InvalidProposalOptions, // 583
 
     /// Proposal is not not executable
     #[error("Proposal is not not executable")]
-    ProposalIsNotExecutable,
+    ProposalIsNotExecutable, // 584
 
-    /// Invalid vote
-    #[error("Invalid vote")]
-    InvalidVote,
+    /// Deny vote is not allowed
+    #[error("Deny vote is not allowed")]
+    DenyVoteIsNotAllowed, // 585
 
     /// Cannot execute defeated option
     #[error("Cannot execute defeated option")]
-    CannotExecuteDefeatedOption,
+    CannotExecuteDefeatedOption, // 586
 
     /// VoterWeightRecord invalid action
     #[error("VoterWeightRecord invalid action")]
-    VoterWeightRecordInvalidAction,
+    VoterWeightRecordInvalidAction, // 587
 
     /// VoterWeightRecord invalid action target
     #[error("VoterWeightRecord invalid action target")]
-    VoterWeightRecordInvalidActionTarget,
+    VoterWeightRecordInvalidActionTarget, // 588
 
     /// Invalid MaxVoterWeightRecord for Realm
     #[error("Invalid MaxVoterWeightRecord for Realm")]
-    InvalidMaxVoterWeightRecordForRealm,
+    InvalidMaxVoterWeightRecordForRealm, // 589
 
     /// Invalid MaxVoterWeightRecord for GoverningTokenMint
     #[error("Invalid MaxVoterWeightRecord for GoverningTokenMint")]
-    InvalidMaxVoterWeightRecordForGoverningTokenMint,
+    InvalidMaxVoterWeightRecordForGoverningTokenMint, // 590
 
     /// MaxVoterWeightRecord expired
     #[error("MaxVoterWeightRecord expired")]
-    MaxVoterWeightRecordExpired,
+    MaxVoterWeightRecordExpired, // 591
 
     /// Not supported VoteType
     #[error("Not supported VoteType")]
-    NotSupportedVoteType,
+    NotSupportedVoteType, // 592
 
     /// RealmConfig change not allowed
     #[error("RealmConfig change not allowed")]
-    RealmConfigChangeNotAllowed,
+    RealmConfigChangeNotAllowed, // 593
 
     /// GovernanceConfig change not allowed
     #[error("GovernanceConfig change not allowed")]
-    GovernanceConfigChangeNotAllowed,
+    GovernanceConfigChangeNotAllowed, // 594
 
     /// At least one VoteThreshold is required
     #[error("At least one VoteThreshold is required")]
-    AtLeastOneVoteThresholdRequired,
+    AtLeastOneVoteThresholdRequired, // 595
 
     /// Reserved buffer must be empty
     #[error("Reserved buffer must be empty")]
-    ReservedBufferMustBeEmpty,
+    ReservedBufferMustBeEmpty, // 596
 
     /// Cannot Relinquish in Finalizing state
     #[error("Cannot Relinquish in Finalizing state")]
-    CannotRelinquishInFinalizingState,
+    CannotRelinquishInFinalizingState, // 597
+
+    /// Invalid RealmConfig account address
+    #[error("Invalid RealmConfig account address")]
+    InvalidRealmConfigAddress, // 598
+
+    /// Cannot deposit dormant tokens
+    #[error("Cannot deposit dormant tokens")]
+    CannotDepositDormantTokens, // 599
+
+    /// Cannot withdraw membership tokens
+    #[error("Cannot withdraw membership tokens")]
+    CannotWithdrawMembershipTokens, // 600
+
+    /// Cannot revoke GoverningTokens
+    #[error("Cannot revoke GoverningTokens")]
+    CannotRevokeGoverningTokens, // 601
+
+    /// Invalid Revoke amount
+    #[error("Invalid Revoke amount")]
+    InvalidRevokeAmount, // 602
+
+    /// Invalid GoverningToken source
+    #[error("Invalid GoverningToken source")]
+    InvalidGoverningTokenSource, // 603
+
+    /// Cannot change community TokenType to Membership
+    #[error("Cannot change community TokenType to Membership")]
+    CannotChangeCommunityTokenTypeToMembership, // 604
+
+    /// Voter weight threshold disabled
+    #[error("Voter weight threshold disabled")]
+    VoterWeightThresholdDisabled, // 605
+
+    /// Vote not allowed in cool off time
+    #[error("Vote not allowed in cool off time")]
+    VoteNotAllowedInCoolOffTime, // 606
+
+    /// Cannot refund ProposalDeposit
+    #[error("Cannot refund ProposalDeposit")]
+    CannotRefundProposalDeposit, // 607
+
+    ///Invalid Proposal for ProposalDeposit
+    #[error("Invalid Proposal for ProposalDeposit")]
+    InvalidProposalForProposalDeposit, // 608
+
+    /// Invalid deposit_exempt_proposal_count
+    #[error("Invalid deposit_exempt_proposal_count")]
+    InvalidDepositExemptProposalCount, // 609
+
+    /// GoverningTokenMint not allowed to vote
+    #[error("GoverningTokenMint not allowed to vote")]
+    GoverningTokenMintNotAllowedToVote, // 610
+
+    ///Invalid deposit Payer for ProposalDeposit
+    #[error("Invalid deposit Payer for ProposalDeposit")]
+    InvalidDepositPayerForProposalDeposit, // 611
+
+    /// Invalid State: Proposal is not in final state
+    #[error("Invalid State: Proposal is not in final state")]
+    InvalidStateNotFinal, // 612
+
+    ///Invalid state for proposal state transition to Completed
+    #[error("Invalid state for proposal state transition to Completed")]
+    InvalidStateToCompleteProposal, // 613
+
+    /// Invalid number of vote choices
+    #[error("Invalid number of vote choices")]
+    InvalidNumberOfVoteChoices, // 614
+
+    /// Ranked vote is not supported
+    #[error("Ranked vote is not supported")]
+    RankedVoteIsNotSupported, // 615
+
+    /// Choice weight must be 100%
+    #[error("Choice weight must be 100%")]
+    ChoiceWeightMustBe100Percent, // 616
+
+    /// Single choice only is allowed
+    #[error("Single choice only is allowed")]
+    SingleChoiceOnlyIsAllowed, // 617
+
+    /// At least single choice is required
+    #[error("At least single choice is required")]
+    AtLeastSingleChoiceIsRequired, // 618
+
+    /// Total vote weight must be 100%
+    #[error("Total vote weight must be 100%")]
+    TotalVoteWeightMustBe100Percent, // 619
+
+    /// Invalid multi choice proposal parameters
+    #[error("Invalid multi choice proposal parameters")]
+    InvalidMultiChoiceProposalParameters, // 620
+
+    /// Invalid Governance for RequiredSignatory
+    #[error("Invalid Governance for RequiredSignatory")]
+    InvalidGovernanceForRequiredSignatory,
+
+    /// SignatoryRecord already exists
+    #[error("Signatory Record has already been created")]
+    SignatoryRecordAlreadyExists,
+
+    /// Instruction has been removed
+    #[error("Instruction has been removed")]
+    InstructionDeprecated,
+
+    /// Proposal is missing signatories required by its governance
+    #[error("Proposal is missing required signatories")]
+    MissingRequiredSignatories,
 }
 
 impl PrintProgramError for GovernanceError {

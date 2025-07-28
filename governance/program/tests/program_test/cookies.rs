@@ -1,16 +1,18 @@
-use solana_program::{instruction::Instruction, pubkey::Pubkey};
-use solana_sdk::signature::Keypair;
-use spl_governance::state::{
-    governance::GovernanceV2, native_treasury::NativeTreasury, program_metadata::ProgramMetadata,
-    proposal::ProposalV2, proposal_transaction::ProposalTransactionV2, realm::RealmV2,
-    realm_config::RealmConfigAccount, signatory_record::SignatoryRecordV2,
-    token_owner_record::TokenOwnerRecordV2, vote_record::VoteRecordV2,
+use {
+    solana_program::{instruction::Instruction, pubkey::Pubkey},
+    solana_sdk::signature::Keypair,
+    spl_governance::state::{
+        governance::GovernanceV2, native_treasury::NativeTreasury,
+        program_metadata::ProgramMetadata, proposal::ProposalV2, proposal_deposit::ProposalDeposit,
+        proposal_transaction::ProposalTransactionV2, realm::RealmV2,
+        realm_config::RealmConfigAccount, signatory_record::SignatoryRecordV2,
+        token_owner_record::TokenOwnerRecordV2, vote_record::VoteRecordV2,
+    },
+    spl_governance_addin_api::{
+        max_voter_weight::MaxVoterWeightRecord, voter_weight::VoterWeightRecord,
+    },
+    spl_governance_test_sdk::tools::clone_keypair,
 };
-
-use spl_governance_addin_api::{
-    max_voter_weight::MaxVoterWeightRecord, voter_weight::VoterWeightRecord,
-};
-use spl_governance_test_sdk::tools::clone_keypair;
 
 pub trait AccountCookie {
     fn get_address(&self) -> Pubkey;
@@ -32,7 +34,7 @@ pub struct RealmCookie {
 
     pub realm_authority: Option<Keypair>,
 
-    pub realm_config: Option<RealmConfigCookie>,
+    pub realm_config: RealmConfigCookie,
 }
 
 #[derive(Debug)]
@@ -142,13 +144,21 @@ pub struct ProposalCookie {
 
     pub realm: Pubkey,
     pub proposal_owner: Pubkey,
+
+    pub proposal_deposit: ProposalDepositCookie,
+}
+
+#[derive(Debug)]
+pub struct ProposalDepositCookie {
+    pub address: Pubkey,
+    pub account: ProposalDeposit,
 }
 
 #[derive(Debug)]
 pub struct SignatoryRecordCookie {
     pub address: Pubkey,
     pub account: SignatoryRecordV2,
-    pub signatory: Keypair,
+    pub signatory: Option<Keypair>,
 }
 
 #[derive(Debug)]

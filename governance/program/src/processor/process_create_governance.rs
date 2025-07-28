@@ -1,22 +1,26 @@
 //! Program state processor
 
-use crate::state::{
-    enums::GovernanceAccountType,
-    governance::{
-        assert_valid_create_governance_args, get_governance_address_seeds, GovernanceConfig,
-        GovernanceV2,
+use {
+    crate::{
+        state::{
+            enums::GovernanceAccountType,
+            governance::{
+                assert_valid_create_governance_args, get_governance_address_seeds,
+                GovernanceConfig, GovernanceV2,
+            },
+            realm::get_realm_data,
+        },
+        tools::structs::Reserved119,
     },
-    realm::get_realm_data,
+    solana_program::{
+        account_info::{next_account_info, AccountInfo},
+        entrypoint::ProgramResult,
+        pubkey::Pubkey,
+        rent::Rent,
+        sysvar::Sysvar,
+    },
+    spl_governance_tools::account::create_and_serialize_account_signed,
 };
-use solana_program::{
-    account_info::{next_account_info, AccountInfo},
-    entrypoint::ProgramResult,
-    pubkey::Pubkey,
-    rent::Rent,
-    sysvar::Sysvar,
-};
-
-use spl_governance_tools::account::create_and_serialize_account_signed;
 
 /// Processes CreateGovernance instruction
 pub fn process_create_governance(
@@ -56,10 +60,10 @@ pub fn process_create_governance(
         realm: *realm_info.key,
         governed_account: *governed_account_info.key,
         config,
-        proposals_count: 0,
-        reserved: [0; 6],
-        voting_proposal_count: 0,
-        reserved_v2: [0; 128],
+        reserved1: 0,
+        reserved_v2: Reserved119::default(),
+        required_signatories_count: 0,
+        active_proposal_count: 0,
     };
 
     create_and_serialize_account_signed::<GovernanceV2>(
@@ -70,6 +74,7 @@ pub fn process_create_governance(
         program_id,
         system_info,
         &rent,
+        0,
     )?;
 
     Ok(())

@@ -1,9 +1,10 @@
+#[cfg(feature = "serde-traits")]
+use serde::{Deserialize, Serialize};
 use {
     crate::{
         check_program_account,
         extension::interest_bearing_mint::BasisPoints,
         instruction::{encode_instruction, TokenInstruction},
-        pod::OptionalNonZeroPubkey,
     },
     bytemuck::{Pod, Zeroable},
     num_enum::{IntoPrimitive, TryFromPrimitive},
@@ -12,10 +13,13 @@ use {
         program_error::ProgramError,
         pubkey::Pubkey,
     },
+    spl_pod::optional_keys::OptionalNonZeroPubkey,
     std::convert::TryInto,
 };
 
 /// Interesting-bearing mint extension instructions
+#[cfg_attr(feature = "serde-traits", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde-traits", serde(rename_all = "camelCase"))]
 #[derive(Clone, Copy, Debug, PartialEq, IntoPrimitive, TryFromPrimitive)]
 #[repr(u8)]
 pub enum InterestBearingMintInstruction {
@@ -34,7 +38,6 @@ pub enum InterestBearingMintInstruction {
     ///
     /// Data expected by this instruction:
     ///   `crate::extension::interest_bearing::instruction::InitializeInstructionData`
-    ///
     Initialize,
     /// Update the interest rate. Only supported for mints that include the
     /// `InterestBearingConfig` extension.
@@ -52,11 +55,12 @@ pub enum InterestBearingMintInstruction {
     ///
     /// Data expected by this instruction:
     ///   `crate::extension::interest_bearing::BasisPoints`
-    ///
     UpdateRate,
 }
 
 /// Data expected by `InterestBearing::Initialize`
+#[cfg_attr(feature = "serde-traits", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde-traits", serde(rename_all = "camelCase"))]
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 pub struct InitializeInstructionData {

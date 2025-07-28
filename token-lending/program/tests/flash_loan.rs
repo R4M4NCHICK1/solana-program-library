@@ -1,18 +1,21 @@
-#![cfg(feature = "test-bpf")]
+#![allow(clippy::arithmetic_side_effects)]
+#![cfg(feature = "test-sbf")]
 
 mod helpers;
 
-use helpers::*;
-use solana_program::instruction::AccountMeta;
-use solana_program_test::*;
-use solana_sdk::{
-    pubkey::Pubkey,
-    signature::{Keypair, Signer},
-    transaction::{Transaction, TransactionError},
-};
-use spl_token::solana_program::instruction::InstructionError;
-use spl_token_lending::{
-    error::LendingError, instruction::flash_loan, processor::process_instruction,
+use {
+    helpers::*,
+    solana_program::instruction::AccountMeta,
+    solana_program_test::*,
+    solana_sdk::{
+        pubkey::Pubkey,
+        signature::{Keypair, Signer},
+        transaction::{Transaction, TransactionError},
+    },
+    spl_token::solana_program::instruction::InstructionError,
+    spl_token_lending::{
+        error::LendingError, instruction::flash_loan, processor::process_instruction,
+    },
 };
 
 #[tokio::test]
@@ -35,7 +38,7 @@ async fn test_success() {
     test.prefer_bpf(false);
     test.add_program(
         "flash_loan_receiver",
-        receiver_program_id.clone(),
+        receiver_program_id,
         processor!(helpers::flash_loan_receiver::process_instruction),
     );
 
@@ -94,11 +97,8 @@ async fn test_success() {
             usdc_test_reserve.liquidity_fee_receiver_pubkey,
             usdc_test_reserve.liquidity_host_pubkey,
             lending_market.pubkey,
-            receiver_program_id.clone(),
-            vec![AccountMeta::new_readonly(
-                receiver_authority_pubkey.clone(),
-                false,
-            )],
+            receiver_program_id,
+            vec![AccountMeta::new_readonly(receiver_authority_pubkey, false)],
         )],
         Some(&payer.pubkey()),
     );
@@ -155,7 +155,7 @@ async fn test_failure() {
     test.prefer_bpf(false);
     test.add_program(
         "flash_loan_receiver",
-        flash_loan_receiver_program_id.clone(),
+        flash_loan_receiver_program_id,
         processor!(helpers::flash_loan_receiver::process_instruction),
     );
 
@@ -206,11 +206,8 @@ async fn test_failure() {
             usdc_test_reserve.liquidity_fee_receiver_pubkey,
             usdc_test_reserve.liquidity_host_pubkey,
             lending_market.pubkey,
-            flash_loan_receiver_program_id.clone(),
-            vec![AccountMeta::new_readonly(
-                receiver_authority_pubkey.clone(),
-                false,
-            )],
+            flash_loan_receiver_program_id,
+            vec![AccountMeta::new_readonly(receiver_authority_pubkey, false)],
         )],
         Some(&payer.pubkey()),
     );

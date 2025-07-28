@@ -10,14 +10,14 @@ from stake.state import StakeAuthorize
 @pytest.mark.asyncio
 async def test_create_stake(async_client, payer):
     stake = Keypair()
-    await create_stake(async_client, payer, stake, payer.public_key, MINIMUM_DELEGATION)
+    await create_stake(async_client, payer, stake, payer.public_key, 1)
 
 
 @pytest.mark.asyncio
 async def test_delegate_stake(async_client, validators, payer):
     validator = validators[0]
     stake = Keypair()
-    await create_stake(async_client, payer, stake, payer.public_key, 1)
+    await create_stake(async_client, payer, stake, payer.public_key, MINIMUM_DELEGATION)
     await delegate_stake(async_client, payer, payer, stake.public_key, validator)
 
 

@@ -1,28 +1,30 @@
-use crate::{
-    error::BinaryOptionError,
-    instruction::BinaryOptionInstruction,
-    spl_utils::{
-        spl_approve, spl_burn, spl_burn_signed, spl_initialize, spl_mint_initialize, spl_mint_to,
-        spl_set_authority, spl_token_transfer, spl_token_transfer_signed,
+use {
+    crate::{
+        error::BinaryOptionError,
+        instruction::BinaryOptionInstruction,
+        spl_utils::{
+            spl_approve, spl_burn, spl_burn_signed, spl_initialize, spl_mint_initialize,
+            spl_mint_to, spl_set_authority, spl_token_transfer, spl_token_transfer_signed,
+        },
+        state::BinaryOption,
+        system_utils::{create_new_account, create_or_allocate_account_raw},
+        validation_utils::{
+            assert_initialized, assert_keys_equal, assert_keys_unequal, assert_owned_by,
+        },
     },
-    state::BinaryOption,
-    system_utils::{create_new_account, create_or_allocate_account_raw},
-    validation_utils::{
-        assert_initialized, assert_keys_equal, assert_keys_unequal, assert_owned_by,
+    borsh::BorshDeserialize,
+    solana_program::{
+        account_info::{next_account_info, AccountInfo},
+        entrypoint::ProgramResult,
+        msg,
+        program_error::ProgramError,
+        program_pack::Pack,
+        pubkey::Pubkey,
     },
-};
-use borsh::{BorshDeserialize, BorshSerialize};
-use solana_program::{
-    account_info::{next_account_info, AccountInfo},
-    entrypoint::ProgramResult,
-    msg,
-    program_error::ProgramError,
-    program_pack::Pack,
-    pubkey::Pubkey,
-};
-use spl_token::{
-    instruction::AuthorityType,
-    state::{Account, Mint},
+    spl_token::{
+        instruction::AuthorityType,
+        state::{Account, Mint},
+    },
 };
 
 pub struct Processor;
@@ -175,8 +177,10 @@ pub fn process_initialize_binary_option(
     binary_option.escrow_mint_account_pubkey = *escrow_mint_info.key;
     binary_option.escrow_account_pubkey = *escrow_account_info.key;
     binary_option.owner = *update_authority_info.key;
-    binary_option.serialize(&mut *binary_option_account_info.data.borrow_mut())?;
-
+    borsh::to_writer(
+        &mut binary_option_account_info.data.borrow_mut()[..],
+        &binary_option,
+    )?;
     Ok(())
 }
 
@@ -234,7 +238,10 @@ pub fn process_trade(
     ];
 
     // Validate data
-    if buy_price + sell_price != u64::pow(10, binary_option.decimals as u32) {
+    let total_price = buy_price
+        .checked_add(sell_price)
+        .ok_or(BinaryOptionError::TradePricesIncorrect)?;
+    if total_price != u64::pow(10, binary_option.decimals as u32) {
         return Err(BinaryOptionError::TradePricesIncorrect.into());
     }
     if binary_option.settled {
@@ -411,7 +418,7 @@ pub fn process_trade(
                 seeds,
             )?;
             if n > n_b + n_s {
-                binary_option.increment_supply(n - n_b - n_s);
+                binary_option.increment_supply(n - n_b - n_s)?;
             } else {
                 binary_option.decrement_supply(n - n_b - n_s)?;
             }
@@ -535,8 +542,9 @@ pub fn process_trade(
             binary_option.decrement_supply(n_b)?;
         }
     }
-    // Delegate the burn authority to the PDA, so a private key is unnecessary on collection
-    // This can probably be optimized to reduce the number of instructions needed at some point
+    // Delegate the burn authority to the PDA, so a private key is unnecessary on
+    // collection This can probably be optimized to reduce the number of
+    // instructions needed at some point
     spl_approve(
         token_program_info,
         buyer_long_token_account_info,
@@ -573,14 +581,18 @@ pub fn process_trade(
         s_l,
         long_token_mint.decimals,
     )?;
-    binary_option.serialize(&mut *binary_option_account_info.data.borrow_mut())?;
+    borsh::to_writer(
+        &mut binary_option_account_info.data.borrow_mut()[..],
+        &binary_option,
+    )?;
     Ok(())
 }
 
 pub fn process_settle(_program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
     // This should NEVER be called directly (otherwise this is literally a rug)
-    // The `pool_owner_info` needs to approve this action, so the recommended use case is to have a higher
-    // level program own the pool and use an oracle to resolve settlements
+    // The `pool_owner_info` needs to approve this action, so the recommended use
+    // case is to have a higher level program own the pool and use an oracle to
+    // resolve settlements
     let account_info_iter = &mut accounts.iter();
     let binary_option_account_info = next_account_info(account_info_iter)?;
     let winning_mint_account_info = next_account_info(account_info_iter)?;
@@ -604,7 +616,10 @@ pub fn process_settle(_program_id: &Pubkey, accounts: &[AccountInfo]) -> Program
         return Err(BinaryOptionError::InvalidWinner.into());
     }
     binary_option.settled = true;
-    binary_option.serialize(&mut *binary_option_account_info.data.borrow_mut())?;
+    borsh::to_writer(
+        &mut binary_option_account_info.data.borrow_mut()[..],
+        &binary_option,
+    )?;
     Ok(())
 }
 
@@ -707,7 +722,10 @@ pub fn process_collect(program_id: &Pubkey, accounts: &[AccountInfo]) -> Program
         seeds,
     )?;
     if reward > 0 {
-        let amount = (reward * escrow_account.amount) / binary_option.circulation;
+        let amount = reward
+            .checked_mul(escrow_account.amount)
+            .ok_or(BinaryOptionError::AmountOverflow)?;
+        let amount = amount / binary_option.circulation;
         spl_token_transfer_signed(
             token_program_info,
             escrow_account_info,
@@ -718,6 +736,9 @@ pub fn process_collect(program_id: &Pubkey, accounts: &[AccountInfo]) -> Program
         )?;
         binary_option.decrement_supply(reward)?;
     }
-    binary_option.serialize(&mut *binary_option_account_info.data.borrow_mut())?;
+    borsh::to_writer(
+        &mut binary_option_account_info.data.borrow_mut()[..],
+        &binary_option,
+    )?;
     Ok(())
 }

@@ -1,16 +1,14 @@
-#![cfg(feature = "test-bpf")]
+#![cfg(feature = "test-sbf")]
 
 use solana_program_test::*;
 
 mod program_test;
 
-use program_test::*;
-use spl_governance::state::{
-    enums::MintMaxVoteWeightSource,
-    realm::{get_realm_address, RealmConfigArgs},
+use {
+    crate::program_test::args::RealmSetupArgs,
+    program_test::*,
+    spl_governance::state::{enums::MintMaxVoterWeightSource, realm::get_realm_address},
 };
-
-use self::args::SetRealmConfigArgs;
 
 #[tokio::test]
 async fn test_create_realm() {
@@ -33,23 +31,16 @@ async fn test_create_realm_with_non_default_config() {
     // Arrange
     let mut governance_test = GovernanceProgramTest::start_new().await;
 
-    let realm_config_args = RealmConfigArgs {
+    let realm_setup_args = RealmSetupArgs {
         use_council_mint: false,
-        community_mint_max_vote_weight_source: MintMaxVoteWeightSource::SupplyFraction(1),
-        min_community_weight_to_create_governance: 10,
-        use_community_voter_weight_addin: false,
-        use_max_community_voter_weight_addin: false,
-    };
-
-    let set_realm_config_args = SetRealmConfigArgs {
-        realm_config_args,
-        community_voter_weight_addin: None,
-        max_community_voter_weight_addin: None,
+        community_mint_max_voter_weight_source: MintMaxVoterWeightSource::SupplyFraction(1),
+        min_community_weight_to_create_governance: 1,
+        ..Default::default()
     };
 
     // Act
     let realm_cookie = governance_test
-        .with_realm_using_config_args(&set_realm_config_args)
+        .with_realm_using_args(&realm_setup_args)
         .await;
 
     // Assert
@@ -58,6 +49,36 @@ async fn test_create_realm_with_non_default_config() {
         .await;
 
     assert_eq!(realm_cookie.account, realm_account);
+}
+
+#[tokio::test]
+async fn test_create_realm_with_max_voter_weight_absolute_value() {
+    // Arrange
+    let mut governance_test = GovernanceProgramTest::start_new().await;
+
+    let realm_setup_args = RealmSetupArgs {
+        community_mint_max_voter_weight_source: MintMaxVoterWeightSource::Absolute(1),
+        ..Default::default()
+    };
+
+    // Act
+    let realm_cookie = governance_test
+        .with_realm_using_args(&realm_setup_args)
+        .await;
+
+    // Assert
+    let realm_account = governance_test
+        .get_realm_account(&realm_cookie.address)
+        .await;
+
+    assert_eq!(realm_cookie.account, realm_account);
+    assert_eq!(
+        realm_cookie
+            .account
+            .config
+            .community_mint_max_voter_weight_source,
+        MintMaxVoterWeightSource::Absolute(1)
+    );
 }
 
 #[tokio::test]

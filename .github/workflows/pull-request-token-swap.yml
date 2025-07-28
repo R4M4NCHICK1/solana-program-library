@@ -7,6 +7,8 @@ on:
     - 'token/**'
     - 'libraries/math/**'
     - 'ci/*-version.sh'
+    - '!token-swap/js/**'
+    - '!token/js/**'
   push:
     branches: [master]
     paths:
@@ -14,12 +16,18 @@ on:
     - 'token/**'
     - 'libraries/math/**'
     - 'ci/*-version.sh'
+    - '!token-swap/js/**'
+    - '!token/js/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  cargo-test-bpf:
+  cargo-test-sbf:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
       - name: Set env vars
         run: |
@@ -28,26 +36,24 @@ jobs:
           source ci/solana-version.sh
           echo "SOLANA_VERSION=$solana_version" >> $GITHUB_ENV
 
-      - uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_STABLE }}
-          override: true
-          profile: minimal
 
-      - uses: actions/cache@v2
+      - uses: actions/cache@v3
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
           key: cargo-build-${{ hashFiles('**/Cargo.lock') }}-${{ env.RUST_STABLE}}
 
-      - uses: actions/cache@v2
+      - uses: actions/cache@v3
         with:
           path: |
             ~/.cargo/bin/rustfilt
-          key: cargo-bpf-bins-${{ runner.os }}
+          key: cargo-sbf-bins-${{ runner.os }}
 
-      - uses: actions/cache@v2
+      - uses: actions/cache@v3
         with:
           path: ~/.cache/solana
           key: solana-${{ env.SOLANA_VERSION }}
@@ -59,14 +65,14 @@ jobs:
           echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
 
       - name: Build and test
-        run: ./ci/cargo-test-bpf.sh token-swap
+        run: ./ci/cargo-test-sbf.sh token-swap
 
       - name: Build production version
         run: |
-          cargo +"$RUST_STABLE" build-bpf \
+          cargo +"$RUST_STABLE" build-sbf \
             --manifest-path=token-swap/program/Cargo.toml \
             --features production \
-            --bpf-out-dir target/deploy-production
+            --sbf-out-dir target/deploy-production
         env:
           SWAP_PROGRAM_OWNER_FEE_ADDRESS: HfoTxFR1Tm6kGmWgYWD6J7YHVy1UwqSULUGVLXkJqaKN
 
@@ -75,7 +81,7 @@ jobs:
           mv target/deploy-production/spl_token_swap.so target/deploy/spl_token_swap_production.so
 
       - name: Upload programs
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v3
         with:
           name: token-swap-programs
           path: "target/deploy/*.so"
@@ -84,31 +90,28 @@ jobs:
   js-test:
     runs-on: ubuntu-latest
     env:
-      NODE_VERSION: 14.x
-    needs: cargo-test-bpf
+      NODE_VERSION: 16.x
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: Use Node.js ${{ env.NODE_VERSION }}
-        uses: actions/setup-node@v1
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-      - uses: actions/cache@v2
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
+      - uses: actions/cache@v3
         with:
           path: ~/.npm
-          key: node-${{ hashFiles('token-swap/js/package-lock.json') }}
+          key: node-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: |
             node-
-      - name: Download programs
-        uses: actions/download-artifact@v2
-        with:
-          name: token-swap-programs
-          path: target/deploy
       - run: ./ci/js-test-token-swap.sh
 
   fuzz:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
       - name: Set env vars
         run: |
@@ -117,27 +120,25 @@ jobs:
           source ci/solana-version.sh
           echo "SOLANA_VERSION=$solana_version" >> $GITHUB_ENV
 
-      - uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_STABLE }}
-          override: true
-          profile: minimal
 
-      - uses: actions/cache@v2
+      - uses: actions/cache@v3
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
           key: token-swap-fuzz-${{ hashFiles('**/Cargo.lock') }}
 
-      - uses: actions/cache@v2
+      - uses: actions/cache@v3
         with:
           path: |
             ~/.cargo/bin/cargo-hfuzz
             ~/.cargo/bin/cargo-honggfuzz
           key: cargo-fuzz-bins-${{ runner.os }}
 
-      - uses: actions/cache@v2
+      - uses: actions/cache@v3
         with:
           path: |
             ~/.cache

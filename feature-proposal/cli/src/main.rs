@@ -1,3 +1,4 @@
+#![allow(clippy::arithmetic_side_effects)]
 use {
     chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc},
     clap::{
@@ -249,8 +250,8 @@ fn unix_timestamp_to_string(unix_timestamp: UnixTimestamp) -> String {
     format!(
         "{} (UnixTimestamp: {})",
         match NaiveDateTime::from_timestamp_opt(unix_timestamp, 0) {
-            Some(ndt) =>
-                DateTime::<Utc>::from_utc(ndt, Utc).to_rfc3339_opts(SecondsFormat::Secs, true),
+            Some(ndt) => DateTime::<Utc>::from_naive_utc_and_offset(ndt, Utc)
+                .to_rfc3339_opts(SecondsFormat::Secs, true),
             None => "unknown".to_string(),
         },
         unix_timestamp,
@@ -358,12 +359,12 @@ fn process_propose(
         the proposal by first looking up their token account address:"
     );
     println!(
-        "    $ spl-token --owner ~/validator-keypair.json accounts {}",
+        "    $ spl-token accounts --owner ~/validator-keypair.json {}",
         mint_address
     );
     println!("and then submit their vote by running:");
     println!(
-        "    $ spl-token --owner ~/validator-keypair.json transfer <TOKEN_ACCOUNT_ADDRESS> ALL {}",
+        "    $ spl-token transfer --owner ~/validator-keypair.json <TOKEN_ACCOUNT_ADDRESS> ALL {}",
         acceptance_token_address
     );
     println!();

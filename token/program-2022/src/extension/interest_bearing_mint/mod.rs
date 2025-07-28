@@ -1,10 +1,13 @@
+#[cfg(feature = "serde-traits")]
+use serde::{Deserialize, Serialize};
 use {
-    crate::{
-        extension::{Extension, ExtensionType},
-        pod::{OptionalNonZeroPubkey, PodI16, PodI64},
-    },
+    crate::extension::{Extension, ExtensionType},
     bytemuck::{Pod, Zeroable},
     solana_program::program_error::ProgramError,
+    spl_pod::{
+        optional_keys::OptionalNonZeroPubkey,
+        primitives::{PodI16, PodI64},
+    },
     std::convert::TryInto,
 };
 
@@ -28,9 +31,11 @@ pub type UnixTimestamp = PodI64;
 /// compounded continuously, so APY will be higher than the published interest
 /// rate.
 ///
-/// To support changing the rate, the config also maintains state for the previous
-/// rate.
+/// To support changing the rate, the config also maintains state for the
+/// previous rate.
 #[repr(C)]
+#[cfg_attr(feature = "serde-traits", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde-traits", serde(rename_all = "camelCase"))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
 pub struct InterestBearingConfig {
     /// Authority that can set the interest rate and authority
@@ -75,8 +80,8 @@ impl InterestBearingConfig {
         )
     }
 
-    /// Convert a raw amount to its UI representation using the given decimals field
-    /// Excess zeroes or unneeded decimal point are trimmed.
+    /// Convert a raw amount to its UI representation using the given decimals
+    /// field Excess zeroes or unneeded decimal point are trimmed.
     pub fn amount_to_ui_amount(
         &self,
         amount: u64,
@@ -88,8 +93,8 @@ impl InterestBearingConfig {
         Some(scaled_amount_with_interest.to_string())
     }
 
-    /// Try to convert a UI represenation of a token amount to its raw amount using the given decimals
-    /// field
+    /// Try to convert a UI representation of a token amount to its raw amount
+    /// using the given decimals field
     pub fn try_ui_amount_into_amount(
         &self,
         ui_amount: &str,
@@ -106,12 +111,14 @@ impl InterestBearingConfig {
         if amount > (u64::MAX as f64) || amount < (u64::MIN as f64) || amount.is_nan() {
             Err(ProgramError::InvalidArgument)
         } else {
-            Ok(amount.round() as u64) // this is important, if you round earlier, you'll get wrong "inf" answers
+            // this is important, if you round earlier, you'll get wrong "inf"
+            // answers
+            Ok(amount.round() as u64)
         }
     }
 
-    /// The new average rate is the time-weighted average of the current rate and average rate,
-    /// solving for r such that:
+    /// The new average rate is the time-weighted average of the current rate
+    /// and average rate, solving for r such that:
     ///
     /// exp(r_1 * t_1) * exp(r_2 * t_2) = exp(r * (t_1 + t_2))
     ///

@@ -2,11 +2,12 @@
 
 from enum import IntEnum
 from typing import NamedTuple, Dict
-from construct import Container, Struct, Float64l, Int32ul, Int64ul  # type: ignore
+from construct import Bytes, Container, Struct, Float64l, Int32ul, Int64ul  # type: ignore
 
 from solana.publickey import PublicKey
 from solana.utils.helpers import decode_byte_string
-from solana._layouts.shared import PUBLIC_KEY_LAYOUT
+
+PUBLIC_KEY_LAYOUT = Bytes(32)
 
 
 class Lockup(NamedTuple):
@@ -47,7 +48,7 @@ class StakeAuthorize(IntEnum):
     WITHDRAWER = 1
 
 
-class StakeStateType(IntEnum):
+class StakeStakeType(IntEnum):
     """Stake State Types."""
     UNINITIALIZED = 0
     INITIALIZED = 1
@@ -55,8 +56,8 @@ class StakeStateType(IntEnum):
     REWARDS_POOL = 3
 
 
-class StakeState(NamedTuple):
-    state_type: StakeStateType
+class StakeStake(NamedTuple):
+    state_type: StakeStakeType
     state: Container
 
     """Stake state."""
@@ -64,7 +65,7 @@ class StakeState(NamedTuple):
     def decode(cls, data: str, encoding: str):
         data_bytes = decode_byte_string(data, encoding)
         parsed = STAKE_STATE_LAYOUT.parse(data_bytes)
-        return StakeState(
+        return StakeStake(
             state_type=parsed['state_type'],
             state=parsed['state'],
         )
@@ -121,9 +122,9 @@ STAKE_STATE_LAYOUT = Struct(
     # Switch(
     #     lambda this: this.state,
     #     {
-    #         StakeStateType.UNINITIALIZED: Pass,
-    #         StakeStateType.INITIALIZED: META_LAYOUT,
-    #         StakeStateType.STAKE: STAKE_AND_META_LAYOUT,
+    #         StakeStakeType.UNINITIALIZED: Pass,
+    #         StakeStakeType.INITIALIZED: META_LAYOUT,
+    #         StakeStakeType.STAKE: STAKE_AND_META_LAYOUT,
     #     }
     # ),
     #

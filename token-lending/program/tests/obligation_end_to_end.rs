@@ -1,25 +1,28 @@
-#![cfg(feature = "test-bpf")]
+#![allow(clippy::arithmetic_side_effects)]
+#![cfg(feature = "test-sbf")]
 
 mod helpers;
 
-use helpers::*;
-use solana_program_test::*;
-use solana_sdk::{
-    account::Account,
-    signature::{Keypair, Signer},
-    system_instruction::create_account,
-    transaction::Transaction,
-};
-use spl_token::{instruction::approve, solana_program::program_pack::Pack};
-use spl_token_lending::{
-    instruction::{
-        borrow_obligation_liquidity, deposit_obligation_collateral, init_obligation,
-        refresh_obligation, refresh_reserve, repay_obligation_liquidity,
-        withdraw_obligation_collateral,
+use {
+    helpers::*,
+    solana_program_test::*,
+    solana_sdk::{
+        account::Account,
+        signature::{Keypair, Signer},
+        system_instruction::create_account,
+        transaction::Transaction,
     },
-    math::Decimal,
-    processor::process_instruction,
-    state::{Obligation, INITIAL_COLLATERAL_RATIO},
+    spl_token::{instruction::approve, solana_program::program_pack::Pack},
+    spl_token_lending::{
+        instruction::{
+            borrow_obligation_liquidity, deposit_obligation_collateral, init_obligation,
+            refresh_obligation, refresh_reserve, repay_obligation_liquidity,
+            withdraw_obligation_collateral,
+        },
+        math::Decimal,
+        processor::process_instruction,
+        state::{Obligation, INITIAL_COLLATERAL_RATIO},
+    },
 };
 
 #[tokio::test]
@@ -165,6 +168,7 @@ async fn test_success() {
             borrow_obligation_liquidity(
                 spl_token_lending::id(),
                 USDC_BORROW_AMOUNT_FRACTIONAL,
+                None,
                 usdc_test_reserve.liquidity_supply_pubkey,
                 usdc_test_reserve.user_liquidity_pubkey,
                 usdc_test_reserve.pubkey,

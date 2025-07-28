@@ -1,14 +1,16 @@
 //! Program state
 
-use borsh::{BorshDeserialize, BorshSchema, BorshSerialize};
-use solana_program::{
-    account_info::AccountInfo, clock::UnixTimestamp, program_error::ProgramError, pubkey::Pubkey,
+use {
+    borsh::{BorshDeserialize, BorshSchema, BorshSerialize},
+    solana_program::{
+        account_info::AccountInfo, clock::UnixTimestamp, program_error::ProgramError,
+        pubkey::Pubkey,
+    },
+    spl_governance_tools::account::{assert_is_valid_account_of_type, AccountMaxSize},
 };
 
-use spl_governance_tools::account::{assert_is_valid_account_of_type, AccountMaxSize};
-
 /// Defines all GovernanceChat accounts types
-#[derive(Clone, Debug, PartialEq, BorshDeserialize, BorshSerialize, BorshSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, BorshDeserialize, BorshSerialize, BorshSchema)]
 pub enum GovernanceChatAccountType {
     /// Default uninitialized account state
     Uninitialized,
@@ -18,18 +20,19 @@ pub enum GovernanceChatAccountType {
 }
 
 /// Chat message body
-#[derive(Clone, Debug, PartialEq, BorshDeserialize, BorshSerialize, BorshSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, BorshDeserialize, BorshSerialize, BorshSchema)]
 pub enum MessageBody {
     /// Text message encoded as utf-8 string
     Text(String),
 
     /// Emoticon encoded using utf-8 characters
-    /// In the UI reactions are displayed together under the parent message (as opposed to hierarchical replies)
+    /// In the UI reactions are displayed together under the parent message (as
+    /// opposed to hierarchical replies)
     Reaction(String),
 }
 
 /// Chat message
-#[derive(Clone, Debug, PartialEq, BorshDeserialize, BorshSerialize, BorshSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, BorshDeserialize, BorshSerialize, BorshSchema)]
 pub struct ChatMessage {
     /// Account type
     pub account_type: GovernanceChatAccountType,
@@ -61,7 +64,8 @@ impl AccountMaxSize for ChatMessage {
     }
 }
 
-/// Checks whether Chat account exists, is initialized and  owned by governance-chat program
+/// Checks whether Chat account exists, is initialized and  owned by
+/// governance-chat program
 pub fn assert_is_valid_chat_message(
     program_id: &Pubkey,
     chat_message_info: &AccountInfo,

@@ -1,3 +1,8 @@
+#[cfg(feature = "serde-traits")]
+use {
+    crate::serialization::coption_fromstr,
+    serde::{Deserialize, Serialize},
+};
 use {
     crate::{check_program_account, error::TokenError, instruction::TokenInstruction},
     solana_program::{
@@ -9,14 +14,12 @@ use {
     std::convert::TryFrom,
 };
 
-#[cfg(feature = "serde-traits")]
-use {
-    crate::serialization::coption_fromstr,
-    serde::{Deserialize, Serialize},
-};
-
 /// Transfer Fee extension instructions
 #[cfg_attr(feature = "serde-traits", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "serde-traits",
+    serde(rename_all = "camelCase", rename_all_fields = "camelCase")
+)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(u8)]
 pub enum TransferFeeInstruction {
@@ -39,8 +42,8 @@ pub enum TransferFeeInstruction {
         /// Withdraw instructions must be signed by this key
         #[cfg_attr(feature = "serde-traits", serde(with = "coption_fromstr"))]
         withdraw_withheld_authority: COption<Pubkey>,
-        /// Amount of transfer collected as fees, expressed as basis points of the
-        /// transfer amount
+        /// Amount of transfer collected as fees, expressed as basis points of
+        /// the transfer amount
         transfer_fee_basis_points: u16,
         /// Maximum fee assessed on transfers
         maximum_fee: u64,
@@ -50,9 +53,12 @@ pub enum TransferFeeInstruction {
     /// Accounts expected by this instruction:
     ///
     ///   * Single owner/delegate
-    ///   0. `[writable]` The source account. Must include the `TransferFeeAmount` extension.
-    ///   1. `[]` The token mint. Must include the `TransferFeeConfig` extension.
-    ///   2. `[writable]` The destination account. Must include the `TransferFeeAmount` extension.
+    ///   0. `[writable]` The source account. Must include the
+    ///      `TransferFeeAmount` extension.
+    ///   1. `[]` The token mint. Must include the `TransferFeeConfig`
+    ///      extension.
+    ///   2. `[writable]` The destination account. Must include the
+    ///      `TransferFeeAmount` extension.
     ///   3. `[signer]` The source account's owner/delegate.
     ///
     ///   * Multisignature owner/delegate
@@ -66,19 +72,21 @@ pub enum TransferFeeInstruction {
         amount: u64,
         /// Expected number of base 10 digits to the right of the decimal place.
         decimals: u8,
-        /// Expected fee assessed on this transfer, calculated off-chain based on
-        /// the transfer_fee_basis_points and maximum_fee of the mint.
+        /// Expected fee assessed on this transfer, calculated off-chain based
+        /// on the transfer_fee_basis_points and maximum_fee of the
+        /// mint.
         fee: u64,
     },
-    /// Transfer all withheld tokens in the mint to an account. Signed by the mint's
-    /// withdraw withheld tokens authority.
+    /// Transfer all withheld tokens in the mint to an account. Signed by the
+    /// mint's withdraw withheld tokens authority.
     ///
     /// Accounts expected by this instruction:
     ///
     ///   * Single owner/delegate
-    ///   0. `[writable]` The token mint. Must include the `TransferFeeConfig` extension.
-    ///   1. `[writable]` The fee receiver account. Must include the `TransferFeeAmount` extension
-    ///      associated with the provided mint.
+    ///   0. `[writable]` The token mint. Must include the `TransferFeeConfig`
+    ///      extension.
+    ///   1. `[writable]` The fee receiver account. Must include the
+    ///      `TransferFeeAmount` extension associated with the provided mint.
     ///   2. `[signer]` The mint's `withdraw_withheld_authority`.
     ///
     ///   * Multisignature owner/delegate
@@ -93,9 +101,11 @@ pub enum TransferFeeInstruction {
     /// Accounts expected by this instruction:
     ///
     ///   * Single owner/delegate
-    ///   0. `[]` The token mint. Must include the `TransferFeeConfig` extension.
-    ///   1. `[writable]` The fee receiver account. Must include the `TransferFeeAmount`
-    ///      extension and be associated with the provided mint.
+    ///   0. `[]` The token mint. Must include the `TransferFeeConfig`
+    ///      extension.
+    ///   1. `[writable]` The fee receiver account. Must include the
+    ///      `TransferFeeAmount` extension and be associated with the provided
+    ///      mint.
     ///   2. `[signer]` The mint's `withdraw_withheld_authority`.
     ///   3. ..3+N `[writable]` The source accounts to withdraw from.
     ///
@@ -113,15 +123,16 @@ pub enum TransferFeeInstruction {
     ///
     /// Succeeds for frozen accounts.
     ///
-    /// Accounts provided should include the `TransferFeeAmount` extension. If not,
-    /// the account is skipped.
+    /// Accounts provided should include the `TransferFeeAmount` extension. If
+    /// not, the account is skipped.
     ///
     /// Accounts expected by this instruction:
     ///
     ///   0. `[writable]` The mint.
     ///   1. ..1+N `[writable]` The source accounts to harvest from.
     HarvestWithheldTokensToMint,
-    /// Set transfer fee. Only supported for mints that include the `TransferFeeConfig` extension.
+    /// Set transfer fee. Only supported for mints that include the
+    /// `TransferFeeConfig` extension.
     ///
     /// Accounts expected by this instruction:
     ///
@@ -134,8 +145,8 @@ pub enum TransferFeeInstruction {
     ///   1. `[]` The mint's multisignature fee account owner.
     ///   2. ..2+M `[signer]` M signer accounts.
     SetTransferFee {
-        /// Amount of transfer collected as fees, expressed as basis points of the
-        /// transfer amount
+        /// Amount of transfer collected as fees, expressed as basis points of
+        /// the transfer amount
         transfer_fee_basis_points: u16,
         /// Maximum fee assessed on transfers
         maximum_fee: u64,
@@ -427,7 +438,7 @@ mod test {
     fn test_instruction_packing() {
         let check = TokenInstruction::TransferFeeExtension(
             TransferFeeInstruction::InitializeTransferFeeConfig {
-                transfer_fee_config_authority: COption::Some(Pubkey::new(&[11u8; 32])),
+                transfer_fee_config_authority: COption::Some(Pubkey::new_from_array([11u8; 32])),
                 withdraw_withheld_authority: COption::None,
                 transfer_fee_basis_points: 111,
                 maximum_fee: u64::MAX,

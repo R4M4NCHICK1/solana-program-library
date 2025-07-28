@@ -1,23 +1,78 @@
-#![cfg(feature = "test-bpf")]
+#![cfg(feature = "test-sbf")]
 
 use solana_program_test::*;
 
 mod program_test;
 
-use program_test::*;
-use spl_governance::{error::GovernanceError, state::enums::ProposalState};
+use {
+    program_test::{args::*, *},
+    spl_governance::{error::GovernanceError, state::enums::ProposalState},
+};
 
 #[tokio::test]
-async fn test_cast_vote_with_max_voter_weight_addin() {
+async fn test_cast_vote_with_community_max_voter_weight_addin() {
     // Arrange
     let mut governance_test = GovernanceProgramTest::start_with_max_voter_weight_addin().await;
     let governed_account_cookie = governance_test.with_governed_account().await;
 
-    let realm_cookie = governance_test.with_realm().await;
+    let realm_cookie = governance_test
+        .with_realm_using_addins(PluginSetupArgs::COMMUNITY_MAX_VOTER_WEIGHT)
+        .await;
 
     // TokenOwnerRecord with voting power of 100
     let mut token_owner_record_cookie = governance_test
         .with_community_token_deposit(&realm_cookie)
+        .await
+        .unwrap();
+
+    // Bump MaxVoterWeight to 200
+    governance_test
+        .with_max_voter_weight_addin_record(&mut token_owner_record_cookie)
+        .await
+        .unwrap();
+
+    let mut governance_cookie = governance_test
+        .with_governance(
+            &realm_cookie,
+            &governed_account_cookie,
+            &token_owner_record_cookie,
+        )
+        .await
+        .unwrap();
+
+    let proposal_cookie = governance_test
+        .with_signed_off_proposal(&token_owner_record_cookie, &mut governance_cookie)
+        .await
+        .unwrap();
+
+    // Act
+    governance_test
+        .with_cast_yes_no_vote(&proposal_cookie, &token_owner_record_cookie, YesNoVote::Yes)
+        .await
+        .unwrap();
+
+    // Assert
+
+    let proposal_account = governance_test
+        .get_proposal_account(&proposal_cookie.address)
+        .await;
+
+    assert_eq!(proposal_account.state, ProposalState::Voting)
+}
+
+#[tokio::test]
+async fn test_cast_vote_with_council_max_voter_weight_addin() {
+    // Arrange
+    let mut governance_test = GovernanceProgramTest::start_with_max_voter_weight_addin().await;
+    let governed_account_cookie = governance_test.with_governed_account().await;
+
+    let realm_cookie = governance_test
+        .with_realm_using_addins(PluginSetupArgs::COUNCIL_MAX_VOTER_WEIGHT)
+        .await;
+
+    // TokenOwnerRecord with voting power of 100
+    let mut token_owner_record_cookie = governance_test
+        .with_council_token_deposit(&realm_cookie)
         .await
         .unwrap();
 
@@ -62,7 +117,9 @@ async fn test_tip_vote_with_max_voter_weight_addin() {
     let mut governance_test = GovernanceProgramTest::start_with_max_voter_weight_addin().await;
     let governed_account_cookie = governance_test.with_governed_account().await;
 
-    let realm_cookie = governance_test.with_realm().await;
+    let realm_cookie = governance_test
+        .with_realm_using_addins(PluginSetupArgs::COMMUNITY_MAX_VOTER_WEIGHT)
+        .await;
 
     // TokenOwnerRecord with voting power of 180
     let mut token_owner_record_cookie = governance_test
@@ -112,7 +169,9 @@ async fn test_tip_vote_with_max_voter_weight_addin_and_max_below_total_cast_vote
     let mut governance_test = GovernanceProgramTest::start_with_max_voter_weight_addin().await;
     let governed_account_cookie = governance_test.with_governed_account().await;
 
-    let realm_cookie = governance_test.with_realm().await;
+    let realm_cookie = governance_test
+        .with_realm_using_addins(PluginSetupArgs::COMMUNITY_MAX_VOTER_WEIGHT)
+        .await;
 
     // TokenOwnerRecord with voting power of 100
     let mut token_owner_record_cookie = governance_test
@@ -153,7 +212,8 @@ async fn test_tip_vote_with_max_voter_weight_addin_and_max_below_total_cast_vote
         .await;
 
     assert_eq!(proposal_account.state, ProposalState::Succeeded);
-    assert_eq!(proposal_account.max_vote_weight, Some(100)); // Adjusted max based on cast votes
+    // Adjusted max based on cast votes
+    assert_eq!(proposal_account.max_vote_weight, Some(100));
 }
 
 #[tokio::test]
@@ -162,7 +222,9 @@ async fn test_finalize_vote_with_max_voter_weight_addin() {
     let mut governance_test = GovernanceProgramTest::start_with_max_voter_weight_addin().await;
     let governed_account_cookie = governance_test.with_governed_account().await;
 
-    let realm_cookie = governance_test.with_realm().await;
+    let realm_cookie = governance_test
+        .with_realm_using_addins(PluginSetupArgs::COMMUNITY_MAX_VOTER_WEIGHT)
+        .await;
 
     // TokenOwnerRecord with voting power of 100
     let mut token_owner_record_cookie = governance_test
@@ -233,7 +295,9 @@ async fn test_finalize_vote_with_max_voter_weight_addin_and_max_below_total_cast
     let mut governance_test = GovernanceProgramTest::start_with_max_voter_weight_addin().await;
     let governed_account_cookie = governance_test.with_governed_account().await;
 
-    let realm_cookie = governance_test.with_realm().await;
+    let realm_cookie = governance_test
+        .with_realm_using_addins(PluginSetupArgs::COMMUNITY_MAX_VOTER_WEIGHT)
+        .await;
 
     // TokenOwnerRecord with voting power of 100
     let mut token_owner_record_cookie = governance_test
@@ -295,7 +359,8 @@ async fn test_finalize_vote_with_max_voter_weight_addin_and_max_below_total_cast
         .await;
 
     assert_eq!(proposal_account.state, ProposalState::Succeeded);
-    assert_eq!(proposal_account.max_vote_weight, Some(100)); // Adjusted max based on cast votes
+    // Adjusted max based on cast votes
+    assert_eq!(proposal_account.max_vote_weight, Some(100));
 }
 
 #[tokio::test]
@@ -304,7 +369,9 @@ async fn test_cast_vote_with_max_voter_weight_addin_and_expired_record_error() {
     let mut governance_test = GovernanceProgramTest::start_with_max_voter_weight_addin().await;
     let governed_account_cookie = governance_test.with_governed_account().await;
 
-    let realm_cookie = governance_test.with_realm().await;
+    let realm_cookie = governance_test
+        .with_realm_using_addins(PluginSetupArgs::COMMUNITY_MAX_VOTER_WEIGHT)
+        .await;
 
     // TokenOwnerRecord with voting power of 100
     let mut token_owner_record_cookie = governance_test

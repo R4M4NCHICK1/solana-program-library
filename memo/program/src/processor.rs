@@ -1,10 +1,12 @@
 //! Program state processor
 
-use solana_program::{
-    account_info::AccountInfo, entrypoint::ProgramResult, msg, program_error::ProgramError,
-    pubkey::Pubkey,
+use {
+    solana_program::{
+        account_info::AccountInfo, entrypoint::ProgramResult, msg, program_error::ProgramError,
+        pubkey::Pubkey,
+    },
+    std::str::from_utf8,
 };
-use std::str::from_utf8;
 
 /// Instruction processor
 pub fn process_instruction(
@@ -36,15 +38,17 @@ pub fn process_instruction(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use solana_program::{
-        account_info::IntoAccountInfo, program_error::ProgramError, pubkey::Pubkey,
+    use {
+        super::*,
+        solana_program::{
+            account_info::IntoAccountInfo, program_error::ProgramError, pubkey::Pubkey,
+        },
+        solana_sdk::account::Account,
     };
-    use solana_sdk::account::Account;
 
     #[test]
     fn test_utf8_memo() {
-        let program_id = Pubkey::new(&[0; 32]);
+        let program_id = Pubkey::new_from_array([0; 32]);
 
         let string = b"letters and such";
         assert_eq!(Ok(()), process_instruction(&program_id, &[], string));
@@ -64,7 +68,7 @@ mod tests {
 
     #[test]
     fn test_signers() {
-        let program_id = Pubkey::new(&[0; 32]);
+        let program_id = Pubkey::new_from_array([0; 32]);
         let memo = "🐆".as_bytes();
 
         let pubkey0 = Pubkey::new_unique();

@@ -1,19 +1,21 @@
-import { Connection, Keypair, PublicKey, Signer } from '@solana/web3.js';
-
-import chai, { expect } from 'chai';
-import chaiAsPromised from 'chai-as-promised';
-chai.use(chaiAsPromised);
+import type { Connection, PublicKey, Signer } from '@solana/web3.js';
+import { Keypair } from '@solana/web3.js';
 
 import {
     ASSOCIATED_TOKEN_PROGRAM_ID,
     createMint,
     getMint,
     createAccount,
+    createAssociatedTokenAccountIdempotent,
     getAccount,
     getAssociatedTokenAddress,
+    getOrCreateAssociatedTokenAccount,
 } from '../../src';
 
 import { TEST_PROGRAM_ID, newAccountWithLamports, getConnection } from '../common';
+import { expect, use } from 'chai';
+import chaiAsPromised from 'chai-as-promised';
+use(chaiAsPromised);
 
 const TEST_TOKEN_DECIMALS = 2;
 describe('createMint', () => {
@@ -98,6 +100,57 @@ describe('createAccount', () => {
             );
             expect(account2).to.not.eql(account);
         }),
+        it('creates associated token account if it does not exist', async () => {
+            const owner = Keypair.generate();
+            const associatedAddress = await getAssociatedTokenAddress(
+                mint,
+                owner.publicKey,
+                false,
+                TEST_PROGRAM_ID,
+                ASSOCIATED_TOKEN_PROGRAM_ID
+            );
+
+            // associated account shouldn't exist
+            const info = await connection.getAccountInfo(associatedAddress);
+            expect(info).to.be.null;
+
+            const createdAccountInfo = await getOrCreateAssociatedTokenAccount(
+                connection,
+                payer,
+                mint,
+                owner.publicKey,
+                false,
+                undefined,
+                undefined,
+                TEST_PROGRAM_ID,
+                ASSOCIATED_TOKEN_PROGRAM_ID
+            );
+            expect(createdAccountInfo.mint).to.eql(mint);
+            expect(createdAccountInfo.owner).to.eql(owner.publicKey);
+            expect(createdAccountInfo.amount).to.eql(BigInt(0));
+            expect(createdAccountInfo.delegate).to.be.null;
+            expect(createdAccountInfo.delegatedAmount).to.eql(BigInt(0));
+            expect(createdAccountInfo.isInitialized).to.be.true;
+            expect(createdAccountInfo.isFrozen).to.be.false;
+            expect(createdAccountInfo.isNative).to.be.false;
+            expect(createdAccountInfo.rentExemptReserve).to.be.null;
+            expect(createdAccountInfo.closeAuthority).to.be.null;
+
+            // do it again, just gives the account info
+            const accountInfo = await getOrCreateAssociatedTokenAccount(
+                connection,
+                payer,
+                mint,
+                owner.publicKey,
+                false,
+                undefined,
+                undefined,
+                TEST_PROGRAM_ID,
+                ASSOCIATED_TOKEN_PROGRAM_ID
+            );
+
+            expect(createdAccountInfo).to.eql(accountInfo);
+        }),
         it('associated token account', async () => {
             const owner = Keypair.generate();
             const associatedAddress = await getAssociatedTokenAddress(
@@ -141,5 +194,17 @@ describe('createAccount', () => {
                     TEST_PROGRAM_ID
                 )
             ).to.be.rejected;
+
+            // when creating again but with idempotent mode, TX should not throw error
+            return expect(
+                createAssociatedTokenAccountIdempotent(
+                    connection,
+                    payer,
+                    mint,
+                    owner.publicKey,
+                    undefined,
+                    TEST_PROGRAM_ID
+                )
+            ).to.be.fulfilled;
         });
 });

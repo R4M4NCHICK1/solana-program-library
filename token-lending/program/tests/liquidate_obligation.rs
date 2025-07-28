@@ -1,18 +1,21 @@
-#![cfg(feature = "test-bpf")]
+#![allow(clippy::arithmetic_side_effects)]
+#![cfg(feature = "test-sbf")]
 
 mod helpers;
 
-use helpers::*;
-use solana_program_test::*;
-use solana_sdk::{
-    signature::{Keypair, Signer},
-    transaction::Transaction,
-};
-use spl_token::instruction::approve;
-use spl_token_lending::{
-    instruction::{liquidate_obligation, refresh_obligation},
-    processor::process_instruction,
-    state::INITIAL_COLLATERAL_RATIO,
+use {
+    helpers::*,
+    solana_program_test::*,
+    solana_sdk::{
+        signature::{Keypair, Signer},
+        transaction::Transaction,
+    },
+    spl_token::instruction::approve,
+    spl_token_lending::{
+        instruction::{liquidate_obligation, refresh_obligation},
+        processor::process_instruction,
+        state::INITIAL_COLLATERAL_RATIO,
+    },
 };
 
 #[tokio::test]

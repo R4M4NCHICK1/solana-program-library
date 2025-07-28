@@ -21,7 +21,7 @@ module.exports = {
           position: "left",
         },
         {
-          href: "https://discordapp.com/invite/pquxPsq",
+          href: "https://solana.com/discord",
           label: "Chat",
           position: "right",
         },
@@ -41,7 +41,7 @@ module.exports = {
           items: [
             {
               label: "Discord",
-              href: "https://discordapp.com/invite/pquxPsq",
+              href: "https://solana.com/discord",
             },
             {
               label: "Twitter",
@@ -75,6 +75,9 @@ module.exports = {
           path: "src",
           routeBasePath: "/",
           sidebarPath: require.resolve("./sidebars.js"),
+          editUrl: ({ docPath }) => {
+            return `https://github.com/solana-labs/solana-program-library/edit/master/docs/src/${docPath}`;
+          }
         },
         theme: {
           customCss: require.resolve("./src/css/custom.css"),
@@ -82,4 +85,10 @@ module.exports = {
       },
     ],
   ],
+  scripts: [
+    'https://buttons.github.io/buttons.js',
+    'https://cdnjs.cloudflare.com/ajax/libs/clipboard.js/2.0.0/clipboard.min.js',
+    '/js/code-block-buttons.js',
+  ],
+  stylesheets: ['/css/code-block-buttons.css'],
 };

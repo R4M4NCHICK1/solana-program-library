@@ -1,7 +1,17 @@
-import { publicKey, struct, u32, u64, u8, option, vec } from '@project-serum/borsh';
+import { publicKey, struct, u32, u64, u8, option, vec } from '@coral-xyz/borsh';
 import { Lockup, PublicKey } from '@solana/web3.js';
-import { AccountInfo } from '@solana/spl-token';
 import BN from 'bn.js';
+import {
+  Infer,
+  number,
+  nullable,
+  enums,
+  type,
+  coerce,
+  instance,
+  string,
+  optional,
+} from 'superstruct';
 
 export interface Fee {
   denominator: BN;
@@ -10,28 +20,62 @@ export interface Fee {
 
 const feeFields = [u64('denominator'), u64('numerator')];
 
-/**
- * AccountLayout.encode from "@solana/spl-token" doesn't work
- */
-export const AccountLayout = struct<AccountInfo>([
-  publicKey('mint'),
-  publicKey('owner'),
-  u64('amount'),
-  u32('delegateOption'),
-  publicKey('delegate'),
-  u8('state'),
-  u32('isNativeOption'),
-  u64('isNative'),
-  u64('delegatedAmount'),
-  u32('closeAuthorityOption'),
-  publicKey('closeAuthority'),
-]);
-
 export enum AccountType {
   Uninitialized,
   StakePool,
   ValidatorList,
 }
+
+export const BigNumFromString = coerce(instance(BN), string(), (value) => {
+  if (typeof value === 'string') return new BN(value, 10);
+  throw new Error('invalid big num');
+});
+
+export const PublicKeyFromString = coerce(
+  instance(PublicKey),
+  string(),
+  (value) => new PublicKey(value),
+);
+
+export type StakeAccountType = Infer<typeof StakeAccountType>;
+export const StakeAccountType = enums(['uninitialized', 'initialized', 'delegated', 'rewardsPool']);
+
+export type StakeMeta = Infer<typeof StakeMeta>;
+export const StakeMeta = type({
+  rentExemptReserve: BigNumFromString,
+  authorized: type({
+    staker: PublicKeyFromString,
+    withdrawer: PublicKeyFromString,
+  }),
+  lockup: type({
+    unixTimestamp: number(),
+    epoch: number(),
+    custodian: PublicKeyFromString,
+  }),
+});
+
+export type StakeAccountInfo = Infer<typeof StakeAccountInfo>;
+export const StakeAccountInfo = type({
+  meta: StakeMeta,
+  stake: nullable(
+    type({
+      delegation: type({
+        voter: PublicKeyFromString,
+        stake: BigNumFromString,
+        activationEpoch: BigNumFromString,
+        deactivationEpoch: BigNumFromString,
+        warmupCooldownRate: number(),
+      }),
+      creditsObserved: number(),
+    }),
+  ),
+});
+
+export type StakeAccount = Infer<typeof StakeAccount>;
+export const StakeAccount = type({
+  type: StakeAccountType,
+  info: optional(StakeAccountInfo),
+});
 
 export interface StakePool {
   accountType: AccountType;

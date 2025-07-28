@@ -1,3 +1,4 @@
+#![allow(clippy::arithmetic_side_effects)]
 //! Program state processor
 
 use {
@@ -144,6 +145,18 @@ pub fn process_instruction(
             msg!("{}", result as u64);
             Ok(())
         }
+        MathInstruction::F64Pow { base, exponent } => {
+            msg!("Calculating f64 Pow");
+            sol_log_compute_units();
+            let result = base.powi(exponent as i32);
+            sol_log_compute_units();
+            msg!("{}", result as u64);
+            sol_log_compute_units();
+            let result = base.powf(exponent);
+            sol_log_compute_units();
+            msg!("{}", result as u64);
+            Ok(())
+        }
         MathInstruction::Noop => {
             msg!("Do nothing");
             msg!("{}", 0_u64);
@@ -154,9 +167,7 @@ pub fn process_instruction(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::instruction::MathInstruction;
-    use borsh::BorshSerialize;
+    use {super::*, crate::instruction::MathInstruction, borsh::BorshSerialize};
 
     #[test]
     fn test_u64_multiply() {

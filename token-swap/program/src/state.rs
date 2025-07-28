@@ -1,14 +1,25 @@
 //! State transition types
 
-use crate::curve::{base::SwapCurve, fees::Fees};
-use arrayref::{array_mut_ref, array_ref, array_refs, mut_array_refs};
-use enum_dispatch::enum_dispatch;
-use solana_program::{
-    program_error::ProgramError,
-    program_pack::{IsInitialized, Pack, Sealed},
-    pubkey::Pubkey,
+use {
+    crate::{
+        curve::{base::SwapCurve, fees::Fees},
+        error::SwapError,
+    },
+    arrayref::{array_mut_ref, array_ref, array_refs, mut_array_refs},
+    enum_dispatch::enum_dispatch,
+    solana_program::{
+        account_info::AccountInfo,
+        msg,
+        program_error::ProgramError,
+        program_pack::{IsInitialized, Pack, Sealed},
+        pubkey::Pubkey,
+    },
+    spl_token_2022::{
+        extension::StateWithExtensions,
+        state::{Account, AccountState},
+    },
+    std::sync::Arc,
 };
-use std::sync::Arc;
 
 /// Trait representing access to program state across all versions
 #[enum_dispatch]
@@ -33,6 +44,9 @@ pub trait SwapState {
 
     /// Address of pool fee account
     fn pool_fee_account(&self) -> &Pubkey;
+    /// Check if the pool fee info is a valid token program account
+    /// capable of receiving tokens from the mint.
+    fn check_pool_fee_info(&self, pool_fee_info: &AccountInfo) -> Result<(), ProgramError>;
 
     /// Fees associated with swap
     fn fees(&self) -> &Fees;
@@ -164,6 +178,25 @@ impl SwapState for SwapV1 {
         &self.pool_fee_account
     }
 
+    fn check_pool_fee_info(&self, pool_fee_info: &AccountInfo) -> Result<(), ProgramError> {
+        let data = &pool_fee_info.data.borrow();
+        let token_account =
+            StateWithExtensions::<Account>::unpack(data).map_err(|err| match err {
+                ProgramError::InvalidAccountData | ProgramError::UninitializedAccount => {
+                    SwapError::InvalidFeeAccount.into()
+                }
+                _ => err,
+            })?;
+        if pool_fee_info.owner != &self.token_program_id
+            || token_account.base.state != AccountState::Initialized
+            || token_account.base.mint != self.pool_mint
+        {
+            msg!("Pool fee account is not owned by token program, is not initialized, or does not match stake pool's mint");
+            return Err(SwapError::InvalidFeeAccount.into());
+        }
+        Ok(())
+    }
+
     fn fees(&self) -> &Fees {
         &self.fees
     }
@@ -250,10 +283,7 @@ impl Pack for SwapV1 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::curve::stable::StableCurve;
-
-    use std::convert::TryInto;
+    use {super::*, crate::curve::offset::OffsetCurve, std::convert::TryInto};
 
     const TEST_FEES: Fees = Fees {
         trade_fee_numerator: 1,
@@ -276,8 +306,10 @@ mod tests {
     const TEST_POOL_FEE_ACCOUNT: Pubkey = Pubkey::new_from_array([7u8; 32]);
 
     const TEST_CURVE_TYPE: u8 = 2;
-    const TEST_AMP: u64 = 1;
-    const TEST_CURVE: StableCurve = StableCurve { amp: TEST_AMP };
+    const TEST_TOKEN_B_OFFSET: u64 = 1_000_000_000;
+    const TEST_CURVE: OffsetCurve = OffsetCurve {
+        token_b_offset: TEST_TOKEN_B_OFFSET,
+    };
 
     #[test]
     fn swap_version_pack() {
@@ -362,7 +394,7 @@ mod tests {
         packed.extend_from_slice(&TEST_FEES.host_fee_numerator.to_le_bytes());
         packed.extend_from_slice(&TEST_FEES.host_fee_denominator.to_le_bytes());
         packed.push(TEST_CURVE_TYPE);
-        packed.extend_from_slice(&TEST_AMP.to_le_bytes());
+        packed.extend_from_slice(&TEST_TOKEN_B_OFFSET.to_le_bytes());
         packed.extend_from_slice(&[0u8; 24]);
         let unpacked = SwapV1::unpack(&packed).unwrap();
         assert_eq!(swap_info, unpacked);
